@@ -40,6 +40,8 @@ same deployment artifact is copied to `frontend/public/deployments/qie-testnet.j
 so the frontend can load it from `/deployments/qie-testnet.json`.
 
 Set `BACKEND_PRIVATE_KEY` before running the backend.
+`BACKEND_PRIVATE_KEY` is the autonomous execution wallet used for on-chain
+agent actions. The backend refuses to start without `DEFAULT_DAILY_LIMIT`.
 
 Run the backend:
 
@@ -49,9 +51,23 @@ npm run backend
 
 ## REST API
 
+- `POST /agent/run`
+- `GET /agent/status`
+- `GET /agent/history`
 - `POST /create-agent`
 - `POST /run-task`
 - `POST /pause-agent`
 - `GET /status/:agentId`
 
 Payments are real ERC20 `transferFrom` settlements from the stream payer to the receiver. The payer must have QIE stablecoin balance and must approve `StreamVault` before `executePayment` can settle.
+
+## Autonomous Agent Engine
+
+`POST /agent/run` accepts `agentId`, `prompt`, and either an existing `streamId`
+or a `receiver` plus `ratePerUnit`. The engine runs a policy-model step, chooses
+`createStream`, `executePayment`, or `stopStream`, checks local and on-chain
+daily limits, then sends the StreamVault transaction with `BACKEND_PRIVATE_KEY`.
+
+Every decision and transaction is logged in memory and appended to
+`backend/logs/agent-engine.ndjson` with structured fields for decision,
+transaction hash, gas used, and contract interaction type.

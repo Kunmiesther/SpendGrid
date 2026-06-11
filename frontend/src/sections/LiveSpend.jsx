@@ -44,7 +44,7 @@ function BudgetBar({ used, total }) {
 
 export default function LiveSpend() {
   const [ref, inView] = useInView(0.15);
-  const { totalSpend, totalBudget, remaining, txCount, activeAgent } = useLiveSpend();
+  const { agents, totalSpend, totalBudget, remaining, txCount, activeAgent } = useLiveSpend();
 
   const fmt = (n) => n.toLocaleString();
 
@@ -121,12 +121,7 @@ export default function LiveSpend() {
               <span key={h} className="stat-label">{h}</span>
             ))}
           </div>
-          {[
-            { id: "AGT-001", task: "LLM Inference", spend: 18420, budget: 20000, status: "active" },
-            { id: "AGT-002", task: "Data Indexing", spend: 9100, budget: 15000, status: "active" },
-            { id: "AGT-003", task: "Oracle Queries", spend: 6050, budget: 12000, status: "paused" },
-            { id: "AGT-004", task: "Storage Writes", spend: 14800, budget: 20000, status: "active" },
-          ].map((a) => (
+          {agents.map((a) => (
             <div
               key={a.id}
               className="grid grid-cols-2 md:grid-cols-5 gap-y-1 px-6 py-4 border-b border-wire last:border-b-0 hover:bg-surface-2 transition-colors"

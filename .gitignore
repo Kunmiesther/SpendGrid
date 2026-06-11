@@ -2,6 +2,7 @@ node_modules/
 artifacts/
 cache/
 deployments/*.local.json
+backend/logs/*.ndjson
 .env
 npm-debug.log*
 yarn-debug.log*

@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-/// @title MockQIEStable
-/// @notice Testnet payment asset for SpendGrid protocol deployments.
-contract MockQIEStable is ERC20, Ownable {
-    uint256 public constant INITIAL_SUPPLY = 1_000_000_000 ether;
+contract MockQIEStable is ERC20 {
 
-    constructor() ERC20("Mock QIE Stable", "mQIE") Ownable(msg.sender) {
-        _mint(msg.sender, INITIAL_SUPPLY);
+    constructor() ERC20("Mock QIE Stable", "mQIE") {
+        _mint(msg.sender, 1_000_000 * 10 ** 18);
     }
 
-    function mint(address to, uint256 amount) external onlyOwner {
+    function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
 }

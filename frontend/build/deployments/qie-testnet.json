@@ -1,0 +1,21 @@
+{
+  "stable": "0x2D8a005c72C50f2961c58f91B5A6b651F045A7a0",
+  "registry": "0x9380c2C9a75E1Cd87329308B31bf7447eAFe6970",
+  "controller": "0xDDe02252aebDdF65F4Ec373881F544107Bd62796",
+  "vault": "0xe2337Ea67d24c98370c42F22C94496780D8503E0",
+  "addresses": {
+    "mockQIEStable": "0x2D8a005c72C50f2961c58f91B5A6b651F045A7a0",
+    "agentRegistry": "0x9380c2C9a75E1Cd87329308B31bf7447eAFe6970",
+    "spendController": "0xDDe02252aebDdF65F4Ec373881F544107Bd62796",
+    "streamVault": "0xe2337Ea67d24c98370c42F22C94496780D8503E0"
+  },
+  "network": "qie-testnet",
+  "chainId": 1983,
+  "hardhatNetwork": "qieTestnet",
+  "deployer": "0x403E8eb0c7D232F3284f9656b9232a38dBa9AC22",
+  "deployedAt": "2026-06-11T10:16:27.516Z",
+  "qieStablecoin": "0x2D8a005c72C50f2961c58f91B5A6b651F045A7a0",
+  "agentRegistry": "0x9380c2C9a75E1Cd87329308B31bf7447eAFe6970",
+  "spendController": "0xDDe02252aebDdF65F4Ec373881F544107Bd62796",
+  "streamVault": "0xe2337Ea67d24c98370c42F22C94496780D8503E0"
+}

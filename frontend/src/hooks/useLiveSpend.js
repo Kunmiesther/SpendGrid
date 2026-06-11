@@ -1,37 +1,82 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../lib/api";
 
-const MOCK_AGENTS = [
-  { id: "AGT-001", task: "LLM Inference", spend: 18420, budget: 20000, status: "active" },
-  { id: "AGT-002", task: "Data Indexing", spend: 9100, budget: 15000, status: "active" },
-  { id: "AGT-003", task: "Oracle Queries", spend: 6050, budget: 12000, status: "paused" },
-  { id: "AGT-004", task: "Storage Writes", spend: 14800, budget: 20000, status: "active" },
-];
+const DEFAULT_AGENT_ID = process.env.REACT_APP_AGENT_ID || "1";
 
-function generateTick(agents) {
-  return agents.map((a) => {
-    if (a.status !== "active") return a;
-    const delta = Math.floor(Math.random() * 120 + 10);
-    return { ...a, spend: Math.min(a.budget, a.spend + delta) };
-  });
+function toNumber(value) {
+  const raw = Number(value || 0);
+  if (!Number.isFinite(raw)) return 0;
+  return raw;
 }
 
-export function useLiveSpend(interval = 2500) {
-  const [agents, setAgents] = useState(MOCK_AGENTS);
-  const [txCount, setTxCount] = useState(1847);
+function formatAgent(status, history) {
+  const agentId = status?.agentId ? status.agentId.toString() : DEFAULT_AGENT_ID;
+  const budget = status?.budget || {};
+  const dailyLimit = toNumber(budget.dailyLimit);
+  const spentToday = toNumber(budget.spentToday);
+  const paused = Boolean(budget.paused);
+
+  const lastAction = history.find((record) => record.eventType === "agent_run_completed")?.finalAction;
+
+  return {
+    id: `AGT-${agentId.padStart(3, "0")}`,
+    task: lastAction || "Autonomous Execution",
+    spend: spentToday,
+    budget: dailyLimit,
+    status: paused ? "paused" : "active",
+  };
+}
+
+export function useLiveSpend(interval = 4000) {
+  const [status, setStatus] = useState(null);
+  const [history, setHistory] = useState([]);
   const timerRef = useRef(null);
 
   useEffect(() => {
-    timerRef.current = setInterval(() => {
-      setAgents((prev) => generateTick(prev));
-      setTxCount((c) => c + Math.floor(Math.random() * 3 + 1));
-    }, interval);
-    return () => clearInterval(timerRef.current);
+    let cancelled = false;
+
+    async function refresh() {
+      try {
+        const [nextStatus, nextHistory] = await Promise.all([
+          api.getAgentStatus(DEFAULT_AGENT_ID),
+          api.getAgentHistory({ agentId: DEFAULT_AGENT_ID, limit: 50 }),
+        ]);
+
+        if (!cancelled) {
+          setStatus(nextStatus);
+          setHistory(nextHistory.records || []);
+        }
+      } catch (_error) {
+        if (!cancelled) {
+          setStatus(null);
+          setHistory([]);
+        }
+      }
+    }
+
+    refresh();
+    timerRef.current = setInterval(refresh, interval);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timerRef.current);
+    };
   }, [interval]);
 
-  const totalSpend = agents.reduce((s, a) => s + a.spend, 0);
-  const totalBudget = agents.reduce((s, a) => s + a.budget, 0);
-  const remaining = totalBudget - totalSpend;
-  const activeAgent = agents.find((a) => a.status === "active") || agents[0];
+  return useMemo(() => {
+    const activeAgent = formatAgent(status, history);
+    const txCount = history.filter((record) => record.eventType === "contract_interaction").length;
+    const totalSpend = activeAgent.spend;
+    const totalBudget = activeAgent.budget;
+    const remaining = Math.max(0, totalBudget - totalSpend);
 
-  return { agents, totalSpend, totalBudget, remaining, txCount, activeAgent };
+    return {
+      agents: [activeAgent],
+      totalSpend,
+      totalBudget,
+      remaining,
+      txCount,
+      activeAgent,
+    };
+  }, [history, status]);
 }

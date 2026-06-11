@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { useInView } from "../hooks/useInView";
+import { useAgentRuntime } from "../hooks/useAgentRuntime";
 
 const SERVICES = [
   { id: "openai", label: "OpenAI Inference", enabled: true },
@@ -31,6 +32,7 @@ function Toggle({ enabled, onChange }) {
 
 export default function BudgetControl() {
   const [ref, inView] = useInView(0.1);
+  const { runAgent } = useAgentRuntime();
   const [services, setServices] = useState(SERVICES);
   const [paused, setPaused] = useState(false);
   const [dailyLimit, setDailyLimit] = useState(136000);
@@ -130,7 +132,7 @@ export default function BudgetControl() {
 
             {/* Apply */}
             <div className="px-8 py-5 border-t border-wire flex gap-3">
-              <button className="btn-primary">Apply policy</button>
+              <button className="btn-primary" onClick={() => runAgent().catch(() => {})}>Apply policy</button>
               <button className="btn-ghost">Reset to defaults</button>
             </div>
           </motion.div>

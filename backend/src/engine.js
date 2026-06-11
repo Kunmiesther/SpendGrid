@@ -1,0 +1,358 @@
+const { ethers } = require("ethers");
+const { decideAction, runModel } = require("./aiAgent");
+const { assertQieTestnet, makeStreamVaultAdapter } = require("./contracts");
+const { CHAIN_ID, NETWORK_NAME } = require("./deployment");
+const { bigintJson, createId, findEvent, hashPrompt, nowIso, toPositiveUint } = require("./utils");
+
+class AutonomousAgentEngine {
+  constructor(contracts, ledger, options = {}) {
+    this.contracts = contracts;
+    this.streamVault = makeStreamVaultAdapter(contracts.vault);
+    this.ledger = ledger;
+    const configuredDailyLimit = options.defaultDailyLimit || process.env.DEFAULT_DAILY_LIMIT;
+    if (!configuredDailyLimit) {
+      throw new Error("DEFAULT_DAILY_LIMIT is required for autonomous spending safety");
+    }
+    this.defaultDailyLimit = BigInt(configuredDailyLimit);
+    if (this.defaultDailyLimit <= 0n) {
+      throw new Error("DEFAULT_DAILY_LIMIT must be greater than zero");
+    }
+    this.ready = false;
+    this.queue = Promise.resolve();
+  }
+
+  async start() {
+    await assertQieTestnet(this.contracts.provider);
+    const signerAddress = await this.contracts.signer.getAddress();
+
+    this.ready = true;
+    this.ledger.append({
+      eventType: "agent_status",
+      status: "online",
+      mode: "autonomous",
+      chainId: CHAIN_ID,
+      network: NETWORK_NAME,
+      signer: signerAddress,
+      contracts: this.contracts.addresses,
+      defaultDailyLimit: this.defaultDailyLimit
+    });
+  }
+
+  async runTask(input) {
+    return this._enqueue(() => this._runTask(input));
+  }
+
+  async status(agentId) {
+    const signer = await this.contracts.signer.getAddress();
+    const blockNumber = await this.contracts.provider.getBlockNumber();
+    const base = {
+      ok: true,
+      mode: "autonomous",
+      chainId: CHAIN_ID,
+      network: NETWORK_NAME,
+      ready: this.ready,
+      signer,
+      blockNumber,
+      contracts: this.contracts.addresses,
+      defaultDailyLimit: this.defaultDailyLimit.toString(),
+      logPath: this.ledger.logPath
+    };
+
+    if (agentId === undefined || agentId === null || agentId === "") {
+      return bigintJson(base);
+    }
+
+    const normalizedAgentId = toPositiveUint(agentId, "agentId");
+    const [agent, budget, vaultWhitelisted] = await Promise.all([
+      this.contracts.registry.getAgent(normalizedAgentId),
+      this.contracts.controller.getBudget(normalizedAgentId),
+      this.contracts.controller.isServiceWhitelisted(normalizedAgentId, this.contracts.addresses.vault)
+    ]);
+
+    const localSpentToday = this.ledger.dailyPaymentSpend(normalizedAgentId);
+
+    return bigintJson({
+      ...base,
+      agentId: normalizedAgentId,
+      agent: {
+        owner: agent.owner,
+        agentWallet: agent.agentWallet,
+        qiePassId: agent.qiePassId,
+        active: agent.active,
+        createdAt: agent.createdAt
+      },
+      budget: {
+        dailyLimit: budget.dailyLimit,
+        spentToday: budget.spentToday,
+        lastResetTimestamp: budget.lastResetTimestamp,
+        nextResetTimestamp: budget.nextResetTimestamp,
+        paused: budget.paused,
+        localSpentToday
+      },
+      vaultWhitelisted
+    });
+  }
+
+  history(filters = {}) {
+    return {
+      logPath: this.ledger.logPath,
+      records: this.ledger.list(filters)
+    };
+  }
+
+  async _runTask(input) {
+    if (!this.ready) {
+      throw new Error("Autonomous agent engine is not ready");
+    }
+
+    const runId = createId("run");
+    const startedAt = nowIso();
+    const agentId = toPositiveUint(input.agentId, "agentId");
+
+    this.ledger.append({
+      eventType: "agent_run_started",
+      runId,
+      agentId,
+      promptHash: input.prompt ? hashPrompt(input.prompt) : null,
+      requestedAction: input.action || "auto"
+    });
+
+    const aiResult = await runModel(input.prompt, input);
+    const decision = decideAction(input, aiResult);
+
+    this.ledger.append({
+      eventType: "agent_decision",
+      runId,
+      agentId,
+      decisionId: decision.decisionId,
+      decision: {
+        action: decision.action,
+        reason: decision.reason,
+        confidence: aiResult.confidence,
+        usageUnits: decision.units,
+        receiver: decision.receiver || null,
+        streamId: decision.streamId || null,
+        closeAfterRun: decision.closeAfterRun || false
+      },
+      ai: aiResult
+    });
+
+    const interactions = [];
+
+    if (decision.action === "stopStream") {
+      await this._loadStreamForAgent(decision.streamId, agentId);
+      const stopped = await this._stopStream({ runId, agentId, streamId: decision.streamId });
+      interactions.push(stopped);
+      return this._completeRun(runId, agentId, startedAt, decision, aiResult, interactions);
+    }
+
+    let streamId = decision.streamId || null;
+    let ratePerUnit = null;
+
+    if (decision.action === "createStream") {
+      ratePerUnit = decision.ratePerUnit;
+      await this._assertSpendAllowed(agentId, null, ratePerUnit * decision.units);
+
+      const created = await this._createStream({
+        runId,
+        agentId,
+        receiver: decision.receiver,
+        ratePerUnit
+      });
+      interactions.push(created);
+      streamId = BigInt(created.streamId);
+    }
+
+    if (!streamId) {
+      throw new Error("streamId was not resolved for payment execution");
+    }
+
+    const stream = await this._loadStreamForAgent(streamId, agentId);
+    ratePerUnit = ratePerUnit || BigInt(stream.ratePerUnit);
+    const amount = ratePerUnit * decision.units;
+
+    if (decision.action !== "createStream") {
+      await this._assertSpendAllowed(agentId, streamId, amount);
+    }
+
+    const executed = await this._executePayment({
+      runId,
+      agentId,
+      streamId,
+      units: decision.units,
+      amount,
+      ratePerUnit
+    });
+    interactions.push(executed);
+
+    if (decision.closeAfterRun) {
+      const stopped = await this._stopStream({ runId, agentId, streamId });
+      interactions.push(stopped);
+    }
+
+    return this._completeRun(runId, agentId, startedAt, decision, aiResult, interactions);
+  }
+
+  async _createStream({ runId, agentId, receiver, ratePerUnit }) {
+    const tx = await this.streamVault.createStream(agentId, receiver, ratePerUnit);
+    const receipt = await tx.wait();
+    const event = findEvent(receipt, this.streamVault.interface, "StreamCreated");
+
+    return this._logContractInteraction({
+      runId,
+      agentId,
+      interactionType: "createStream",
+      tx,
+      receipt,
+      streamId: event.args.streamId,
+      receiver,
+      ratePerUnit,
+      amount: 0n,
+      units: 0n
+    });
+  }
+
+  async _executePayment({ runId, agentId, streamId, units, amount, ratePerUnit }) {
+    const tx = await this.streamVault.executePayment(streamId, units);
+    const receipt = await tx.wait();
+
+    return this._logContractInteraction({
+      runId,
+      agentId,
+      interactionType: "executePayment",
+      tx,
+      receipt,
+      streamId,
+      amount,
+      units,
+      ratePerUnit
+    });
+  }
+
+  async _stopStream({ runId, agentId, streamId }) {
+    const tx = await this.streamVault.stopStream(streamId);
+    const receipt = await tx.wait();
+
+    return this._logContractInteraction({
+      runId,
+      agentId,
+      interactionType: "stopStream",
+      contractFunction: "closeStream",
+      tx,
+      receipt,
+      streamId,
+      amount: 0n,
+      units: 0n
+    });
+  }
+
+  async _loadStreamForAgent(streamId, agentId) {
+    const stream = await this.contracts.vault.getStream(streamId);
+    if (BigInt(stream.agentId) !== BigInt(agentId)) {
+      throw new Error(`stream ${streamId.toString()} does not belong to agent ${agentId.toString()}`);
+    }
+
+    return stream;
+  }
+
+  async _assertSpendAllowed(agentId, streamId, amount) {
+    if (amount <= 0n) {
+      throw new Error("payment amount must be greater than zero");
+    }
+
+    if (this.defaultDailyLimit > 0n) {
+      const localSpentToday = this.ledger.dailyPaymentSpend(agentId);
+      if (localSpentToday + amount > this.defaultDailyLimit) {
+        this.ledger.append({
+          eventType: "agent_decision",
+          status: "blocked",
+          agentId,
+          streamId,
+          decision: {
+            action: "executePayment",
+            reason: "Local DEFAULT_DAILY_LIMIT guard blocked the transaction",
+            amount,
+            localSpentToday,
+            defaultDailyLimit: this.defaultDailyLimit
+          }
+        });
+        throw new Error("DEFAULT_DAILY_LIMIT would be exceeded");
+      }
+    }
+
+    const [budget, canSpendFor] = await Promise.all([
+      this.contracts.controller.getBudget(agentId),
+      this.contracts.controller.canSpendFor(agentId, this.contracts.addresses.vault, amount)
+    ]);
+
+    if (budget.dailyLimit > 0n && budget.spentToday + amount > budget.dailyLimit) {
+      throw new Error("on-chain daily budget would be exceeded");
+    }
+
+    if (this.defaultDailyLimit > 0n && budget.spentToday + amount > this.defaultDailyLimit) {
+      throw new Error("DEFAULT_DAILY_LIMIT is lower than requested on-chain spend");
+    }
+
+    if (!canSpendFor) {
+      throw new Error("SpendController rejected the proposed payment");
+    }
+  }
+
+  _logContractInteraction(fields) {
+    const record = this.ledger.append({
+      eventType: "contract_interaction",
+      status: fields.receipt.status === 1 ? "confirmed" : "failed",
+      runId: fields.runId,
+      agentId: fields.agentId,
+      interactionType: fields.interactionType,
+      contractInteractionType: fields.interactionType,
+      contractFunction: fields.contractFunction || fields.interactionType,
+      contractAddress: this.contracts.addresses.vault,
+      txHash: fields.tx.hash,
+      gasUsed: fields.receipt.gasUsed,
+      blockNumber: fields.receipt.blockNumber,
+      streamId: fields.streamId || null,
+      receiver: fields.receiver || null,
+      amount: fields.amount || 0n,
+      units: fields.units || 0n,
+      ratePerUnit: fields.ratePerUnit || null
+    });
+
+    return record;
+  }
+
+  _completeRun(runId, agentId, startedAt, decision, aiResult, interactions) {
+    const completed = this.ledger.append({
+      eventType: "agent_run_completed",
+      status: "completed",
+      runId,
+      agentId,
+      startedAt,
+      completedAt: nowIso(),
+      decisionId: decision.decisionId,
+      finalAction: decision.action,
+      interactionCount: interactions.length
+    });
+
+    return bigintJson({
+      runId,
+      agentId,
+      status: "completed",
+      mode: "autonomous",
+      ai: aiResult,
+      decision,
+      interactions,
+      completed
+    });
+  }
+
+  _enqueue(work) {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+}
+
+module.exports = {
+  AutonomousAgentEngine
+};

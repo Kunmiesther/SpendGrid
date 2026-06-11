@@ -1,6 +1,8 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { useInView } from "../hooks/useInView";
+import { useDeployment } from "../hooks/useDeployment";
+import { shortenAddress } from "../lib/wallet";
 
 const ATTRS = [
   { label: "Pass type", value: "Operator — Tier 2" },
@@ -13,6 +15,8 @@ const ATTRS = [
 
 export default function Identity() {
   const [ref, inView] = useInView(0.15);
+  const deployment = useDeployment();
+  const streamVault = deployment?.addresses?.streamVault;
 
   return (
     <section id="identity" ref={ref} className="bg-surface-1 border-t border-wire py-section">
@@ -57,7 +61,7 @@ export default function Identity() {
               {/* Card footer */}
               <div className="px-6 py-4 border-t border-wire">
                 <p className="font-mono text-label text-ink-4 truncate">
-                  0x4f2a8c3d19e0b5f2a714d3e8...e91b2c91e
+                  {streamVault ? shortenAddress(streamVault) : "0x4f2a8c3d19e0b5f2a714d3e8...e91b2c91e"}
                 </p>
               </div>
             </div>

@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { useInView } from "../hooks/useInView";
+import { useDeployment } from "../hooks/useDeployment";
+import { shortenAddress } from "../lib/wallet";
 
 const ENDPOINTS = [
   {
@@ -71,6 +73,19 @@ const INTEGRATIONS = [
 export default function Developers() {
   const [ref, inView] = useInView(0.1);
   const [activeEndpoint, setActiveEndpoint] = useState(0);
+  const deployment = useDeployment();
+  const integrations = INTEGRATIONS.map((item) => {
+    if (item.label !== "Smart contracts" || !deployment?.addresses) {
+      return item;
+    }
+
+    return {
+      ...item,
+      body: `Vault ${shortenAddress(deployment.addresses.streamVault)}. Registry ${shortenAddress(
+        deployment.addresses.agentRegistry
+      )}. Controller ${shortenAddress(deployment.addresses.spendController)}.`,
+    };
+  });
 
   return (
     <section id="developers" ref={ref} className="bg-surface-1 border-t border-wire py-section">
@@ -92,7 +107,7 @@ export default function Developers() {
 
         {/* Integration options — 2-column grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-wire border border-wire rounded-sm overflow-hidden mb-16">
-          {INTEGRATIONS.map((item, i) => (
+          {integrations.map((item, i) => (
             <motion.div
               key={item.label}
               initial={{ opacity: 0 }}
