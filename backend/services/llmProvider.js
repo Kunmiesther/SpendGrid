@@ -56,6 +56,78 @@ class LLMProvider {
     };
   }
 
+  async decideEconomicAction(input) {
+    const content = JSON.stringify(input);
+    const systemPrompt = [
+      "You are the SpendGrid autonomous AI economic agent.",
+      "You fully control spending decisions under Option B architecture.",
+      "Decide whether the task deserves an on-chain spend or whether funds should be held.",
+      "Return STRICT JSON ONLY. Do not wrap in markdown. Do not include prose outside JSON.",
+      'Schema: {"action":"spend"|"hold","amount":number,"reasoning":"string"}',
+      "The amount is denominated in whole QIE token units, not wei/base units.",
+      "Never choose an amount greater than budgetRemaining.",
+      "Choose hold with amount 0 when value is unclear, budget is insufficient, or history suggests risk."
+    ].join(" ");
+
+    const data = await this.createChatCompletion({
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content
+        }
+      ],
+      responseFormat: { type: "json_object" }
+    });
+
+    return {
+      content: data.choices?.[0]?.message?.content || "",
+      model: data.model || this.model,
+      usage: data.usage || this.estimateUsage(content, data.choices?.[0]?.message?.content || ""),
+      providerResponseId: data.id || null
+    };
+  }
+
+  async createChatCompletion({ messages, responseFormat }) {
+    if (!this.apiKey) {
+      const error = new Error("OPENROUTER_API_KEY is required");
+      error.statusCode = 500;
+      throw error;
+    }
+
+    const body = {
+      model: this.model,
+      messages
+    };
+
+    if (responseFormat) {
+      body.response_format = responseFormat;
+    }
+
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": this.appUrl,
+        "X-Title": this.appName
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const bodyText = await response.text();
+      const error = new Error(`OpenRouter request failed with ${response.status}: ${bodyText}`);
+      error.statusCode = response.status;
+      throw error;
+    }
+
+    return response.json();
+  }
+
   estimateUsage(prompt, completion) {
     return {
       estimated: true,

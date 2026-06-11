@@ -3,6 +3,7 @@ require("dotenv").config();
 const cors = require("cors");
 const express = require("express");
 const { ethers } = require("ethers");
+const { AgentLoop } = require("./services/agentLoop");
 const { AgentRuntime } = require("./services/agentRuntime");
 const { AutonomousAgentEngine } = require("./src/engine");
 const { makeContracts } = require("./src/contracts");
@@ -10,10 +11,20 @@ const { AgentLedger } = require("./src/ledger");
 const { bigintJson, findEvent, normalizeBytes32, toPositiveUint, toUint } = require("./src/utils");
 
 function makeRuntime() {
-  return {
-    agentRuntime: new AgentRuntime(),
+  const runtime = {
+    agentRuntime: null,
+    agentLoop: null,
     blockchainRuntime: null
   };
+
+  runtime.agentRuntime = new AgentRuntime({
+    getBlockchainRuntime: () => getBlockchainRuntime(runtime)
+  });
+  runtime.agentLoop = new AgentLoop({
+    agentRuntime: runtime.agentRuntime
+  });
+
+  return runtime;
 }
 
 async function getBlockchainRuntime(runtime) {
@@ -47,7 +58,7 @@ function makeApp(runtime = makeRuntime()) {
 
   app.post("/agent/run", async (req, res, next) => {
     try {
-      const result = await runtime.agentRuntime.run(req.body.task || req.body.prompt);
+      const result = await runtime.agentRuntime.run(req.body);
       res.json(result);
     } catch (error) {
       next(error);
@@ -64,6 +75,23 @@ function makeApp(runtime = makeRuntime()) {
       history,
       records: history
     });
+  });
+
+  app.post("/agent/start-loop", (req, res) => {
+    const tasks = Array.isArray(req.body?.tasks) ? req.body.tasks : [];
+    if (req.body?.task) {
+      tasks.push(req.body);
+    }
+
+    res.json(runtime.agentLoop.start(tasks));
+  });
+
+  app.post("/agent/stop-loop", (_req, res) => {
+    res.json(runtime.agentLoop.stop());
+  });
+
+  app.get("/agent/loop-status", (_req, res) => {
+    res.json(runtime.agentLoop.status());
   });
 
   app.post("/create-agent", async (req, res, next) => {
