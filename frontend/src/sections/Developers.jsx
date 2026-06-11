@@ -197,7 +197,7 @@ export default function Developers() {
           className="mt-16 border border-wire rounded-sm overflow-hidden"
         >
           <img
-            src="https://placehold.co/1200x800/111111/ffffff?text=Execution+Core"
+            src="/images/lucid-origin_Wide_aerial_render_of_a_modular_server_rack_infrastructure_clean_rows_of_dark_ha-0.jpg"
             alt="SpendGrid execution core architecture"
             className="w-full object-cover"
             style={{ aspectRatio: "1200/440" }}

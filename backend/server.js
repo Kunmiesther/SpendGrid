@@ -3,70 +3,72 @@ require("dotenv").config();
 const cors = require("cors");
 const express = require("express");
 const { ethers } = require("ethers");
+const { AgentRuntime } = require("./services/agentRuntime");
 const { AutonomousAgentEngine } = require("./src/engine");
 const { makeContracts } = require("./src/contracts");
 const { AgentLedger } = require("./src/ledger");
 const { bigintJson, findEvent, normalizeBytes32, toPositiveUint, toUint } = require("./src/utils");
 
 function makeRuntime() {
+  return {
+    agentRuntime: new AgentRuntime(),
+    blockchainRuntime: null
+  };
+}
+
+async function getBlockchainRuntime(runtime) {
+  if (runtime.blockchainRuntime) {
+    return runtime.blockchainRuntime;
+  }
+
   const contracts = makeContracts();
   const ledger = new AgentLedger();
   const engine = new AutonomousAgentEngine(contracts, ledger);
+  await engine.start();
 
-  return {
+  runtime.blockchainRuntime = {
     contracts,
     engine,
     ledger
   };
+
+  return runtime.blockchainRuntime;
 }
 
-function makeApp(runtime) {
-  const { contracts, engine } = runtime;
+function makeApp(runtime = makeRuntime()) {
   const app = express();
 
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
 
-  app.get("/health", async (_req, res, next) => {
-    try {
-      res.json(await engine.status());
-    } catch (error) {
-      next(error);
-    }
+  app.get("/health", (_req, res) => {
+    res.json({ ok: true, agent: runtime.agentRuntime.getStatus() });
   });
 
   app.post("/agent/run", async (req, res, next) => {
     try {
-      res.json(await engine.runTask(req.body));
+      const result = await runtime.agentRuntime.run(req.body.task || req.body.prompt);
+      res.json(result);
     } catch (error) {
       next(error);
     }
   });
 
-  app.get("/agent/status", async (req, res, next) => {
-    try {
-      res.json(await engine.status(req.query.agentId));
-    } catch (error) {
-      next(error);
-    }
+  app.get("/agent/status", (_req, res) => {
+    res.json(runtime.agentRuntime.getStatus());
   });
 
-  app.get("/agent/history", (req, res, next) => {
-    try {
-      res.json(
-        engine.history({
-          agentId: req.query.agentId,
-          eventType: req.query.eventType,
-          limit: req.query.limit
-        })
-      );
-    } catch (error) {
-      next(error);
-    }
+  app.get("/agent/history", (req, res) => {
+    const history = runtime.agentRuntime.getHistory(req.query.limit);
+    res.json({
+      history,
+      records: history
+    });
   });
 
   app.post("/create-agent", async (req, res, next) => {
     try {
+      const { contracts } = await getBlockchainRuntime(runtime);
       const ownerAddress = await contracts.signer.getAddress();
       const agentWallet = req.body.agentWallet || ownerAddress;
       const qiePassId = normalizeBytes32(req.body.qiePassId);
@@ -115,6 +117,7 @@ function makeApp(runtime) {
 
   app.post("/run-task", async (req, res, next) => {
     try {
+      const { engine } = await getBlockchainRuntime(runtime);
       res.json(
         await engine.runTask({
           action: req.body.streamId ? "executePayment" : "createStream",
@@ -134,10 +137,11 @@ function makeApp(runtime) {
 
   app.post("/pause-agent", async (req, res, next) => {
     try {
+      const { contracts, ledger } = await getBlockchainRuntime(runtime);
       const agentId = toPositiveUint(req.body.agentId, "agentId");
       const tx = await contracts.controller.pauseAgent(agentId);
       const receipt = await tx.wait();
-      runtime.ledger.append({
+      ledger.append({
         eventType: "contract_interaction",
         status: receipt.status === 1 ? "confirmed" : "failed",
         agentId,
@@ -157,6 +161,7 @@ function makeApp(runtime) {
 
   app.get("/status/:agentId", async (req, res, next) => {
     try {
+      const { engine } = await getBlockchainRuntime(runtime);
       res.json(await engine.status(req.params.agentId));
     } catch (error) {
       next(error);
@@ -164,38 +169,27 @@ function makeApp(runtime) {
   });
 
   app.use((error, _req, res, _next) => {
-    const statusCode = error.message && error.message.includes("exceeded") ? 402 : 500;
-    runtime.ledger.append({
-      eventType: "agent_error",
-      status: "failed",
-      error: error.shortMessage || error.message || "Internal server error"
-    });
+    const statusCode = error.statusCode || 500;
     res.status(statusCode).json({ error: error.shortMessage || error.message || "Internal server error" });
   });
 
   return app;
 }
 
-async function start() {
+function start() {
   const runtime = makeRuntime();
-  await runtime.engine.start();
-
   const port = Number(process.env.PORT || 8080);
-  makeApp(runtime).listen(port, async () => {
-    const signer = await runtime.contracts.signer.getAddress();
-    console.log(`SpendGrid autonomous agent engine listening on port ${port}`);
-    console.log(`Signer: ${signer}`);
+  makeApp(runtime).listen(port, () => {
+    console.log(`SpendGrid Agent Runtime listening on port ${port}`);
   });
 }
 
 if (require.main === module) {
-  start().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
+  start();
 }
 
 module.exports = {
+  getBlockchainRuntime,
   makeApp,
   makeRuntime,
   start

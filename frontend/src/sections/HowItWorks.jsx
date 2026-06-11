@@ -82,7 +82,7 @@ export default function HowItWorks() {
           className="mt-16 border border-wire rounded-sm overflow-hidden"
         >
           <img
-            src="frontend/public/images/lucid-origin_Top-down_architectural_blueprint_diagram_of_a_data_pipeline_clean_vector-style_l-0.jpg"
+            src="/images/lucid-origin_Top-down_architectural_blueprint_diagram_of_a_data_pipeline_clean_vector-style_l-0.jpg"
             alt="End-to-end payment flow diagram"
             className="w-full object-cover"
             style={{ aspectRatio: "1200/480" }}

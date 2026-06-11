@@ -76,7 +76,7 @@ export default function Hero() {
           className="w-full border border-wire rounded-t-sm overflow-hidden"
         >
           <img
-            src="frontend/public/images/lucid-origin_Dark_studio_render_of_a_glowing_neural_network_node_geometric_icosahedron_shape_-0.jpg"
+            src="/images/lucid-origin_Dark_studio_render_of_a_glowing_neural_network_node_geometric_icosahedron_shape_-0.jpg"
             alt="AI agent execution environment"
             className="w-full h-auto object-cover"
             style={{ aspectRatio: "1200/640" }}

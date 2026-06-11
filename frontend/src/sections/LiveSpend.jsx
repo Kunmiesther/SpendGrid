@@ -101,7 +101,7 @@ export default function LiveSpend() {
             style={{ minHeight: "420px" }}
           >
             <img
-              src="frontend/public/images/lucid-origin_Macro_close-up_of_a_silicon_wafer_circuit_board_extreme_detail_dark_background_c-0.jpg"
+              src="/images/lucid-origin_Macro_close-up_of_a_silicon_wafer_circuit_board_extreme_detail_dark_background_c-0.jpg"
               alt="Budget engine visualization"
               className="w-full h-full object-cover"
               style={{ minHeight: "420px" }}

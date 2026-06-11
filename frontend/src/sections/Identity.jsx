@@ -75,7 +75,7 @@ export default function Identity() {
             className="border border-wire rounded-sm overflow-hidden"
           >
             <img
-              src="frontend/public/images/lucid-origin_Abstract_3D_render_of_interlocking_geometric_rings_and_planes_identity_verificat-0.jpg"
+              src="/images/lucid-origin_Abstract_3D_render_of_interlocking_geometric_rings_and_planes_identity_verificat-0.jpg"
               alt="Execution core and identity layer"
               className="w-full object-cover"
               style={{ aspectRatio: "4/3" }}
