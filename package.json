@@ -1,0 +1,23 @@
+{
+  "name": "spendgrid-protocol",
+  "version": "1.0.0",
+  "description": "SpendGrid protocol deployment and contract workspace for the QIE testnet.",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:qie": "hardhat run scripts/deploy.js --network qieTestnet",
+    "backend": "node backend/server.js"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.2",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.10"
+  }
+}
