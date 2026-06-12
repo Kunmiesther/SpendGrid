@@ -1,36 +1,133 @@
-import { useState, useCallback } from "react";
-import { connectWallet, shortenAddress } from "../lib/wallet";
+import { useState, useCallback, useEffect } from "react";
+import {
+  clearStoredWallet,
+  connectWallet,
+  copyAddress,
+  getStoredWalletId,
+  getWalletProviders,
+  openFaucet,
+  QIE_TESTNET,
+  shortenAddress,
+  switchToQieTestnet,
+} from "../lib/wallet";
+
+const INITIAL_STATE = {
+  address: null,
+  shortAddress: null,
+  chainId: null,
+  connected: false,
+  loading: false,
+  error: null,
+  walletId: null,
+  walletLabel: null,
+  providers: [],
+  rawProvider: null,
+  copied: false,
+};
 
 export function useWallet() {
-  const [state, setState] = useState({
-    address: null,
-    shortAddress: null,
-    chainId: null,
-    connected: false,
-    loading: false,
-    error: null,
-  });
+  const [state, setState] = useState(INITIAL_STATE);
 
-  const connect = useCallback(async () => {
-    setState((s) => ({ ...s, loading: true, error: null }));
+  const refreshProviders = useCallback(() => {
+    const providers = getWalletProviders();
+    setState((s) => ({ ...s, providers }));
+    return providers;
+  }, []);
+
+  useEffect(() => {
+    const providers = refreshProviders();
+    const storedWalletId = getStoredWalletId();
+    if (storedWalletId && !providers.some((provider) => provider.id === storedWalletId)) {
+      clearStoredWallet();
+    }
+  }, [refreshProviders]);
+
+  const disconnect = useCallback(() => {
+    clearStoredWallet();
+    setState((s) => ({
+      ...INITIAL_STATE,
+      providers: s.providers,
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!state.rawProvider) return undefined;
+
+    const handleAccountsChanged = (accounts) => {
+      const nextAddress = accounts?.[0] || null;
+      if (!nextAddress) {
+        disconnect();
+        return;
+      }
+      setState((s) => ({
+        ...s,
+        address: nextAddress,
+        shortAddress: shortenAddress(nextAddress),
+        connected: true,
+      }));
+    };
+
+    const handleChainChanged = (chainId) => {
+      setState((s) => ({ ...s, chainId: Number.parseInt(chainId, 16) }));
+    };
+
+    state.rawProvider.on?.("accountsChanged", handleAccountsChanged);
+    state.rawProvider.on?.("chainChanged", handleChainChanged);
+
+    return () => {
+      state.rawProvider.removeListener?.("accountsChanged", handleAccountsChanged);
+      state.rawProvider.removeListener?.("chainChanged", handleChainChanged);
+    };
+  }, [disconnect, state.rawProvider]);
+
+  const connect = useCallback(async (walletId) => {
+    setState((s) => ({ ...s, loading: true, error: null, copied: false }));
     try {
-      const { address, chainId } = await connectWallet();
-      setState({
-        address,
-        shortAddress: shortenAddress(address),
-        chainId,
+      const selectedWalletId = walletId || getStoredWalletId();
+      const result = await connectWallet(selectedWalletId);
+      setState((s) => ({
+        ...s,
+        address: result.address,
+        shortAddress: shortenAddress(result.address),
+        chainId: result.chainId,
         connected: true,
         loading: false,
         error: null,
-      });
+        walletId: result.walletId,
+        walletLabel: result.walletLabel,
+        rawProvider: result.rawProvider,
+      }));
     } catch (err) {
       setState((s) => ({ ...s, loading: false, error: err.message }));
+      throw err;
     }
   }, []);
 
-  const disconnect = useCallback(() => {
-    setState({ address: null, shortAddress: null, chainId: null, connected: false, loading: false, error: null });
-  }, []);
+  const switchNetwork = useCallback(async () => {
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      await switchToQieTestnet(state.rawProvider);
+      setState((s) => ({ ...s, chainId: QIE_TESTNET.chainId, loading: false }));
+    } catch (err) {
+      setState((s) => ({ ...s, loading: false, error: err.message }));
+      throw err;
+    }
+  }, [state.rawProvider]);
 
-  return { ...state, connect, disconnect };
+  const copy = useCallback(async () => {
+    await copyAddress(state.address);
+    setState((s) => ({ ...s, copied: true }));
+    window.setTimeout(() => setState((s) => ({ ...s, copied: false })), 1200);
+  }, [state.address]);
+
+  return {
+    ...state,
+    isQieTestnet: state.chainId === QIE_TESTNET.chainId,
+    connect,
+    copy,
+    disconnect,
+    openFaucet,
+    refreshProviders,
+    switchNetwork,
+  };
 }

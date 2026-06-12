@@ -1,6 +1,6 @@
 # SpendGrid
 
-**Autonomous Payment Infrastructure for AI Agents**
+**Autonomous Treasury Infrastructure for AI Agents**
 
 SpendGrid gives your agents programmable budgets, on-chain identity via QIE Pass, and real-time spending control — without a human in the loop for every transaction.
 

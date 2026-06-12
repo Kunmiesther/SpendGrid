@@ -16,10 +16,10 @@ export default function Footer() {
           {/* Brand */}
           <div>
             <p className="font-mono text-body-sm font-medium text-ink-0 mb-4">
-              SPEND<span className="text-ink-3">GRID</span>
+              SPEND<span className="text-[#FF2D78]">GRID</span>
             </p>
             <p className="text-body-sm text-ink-3 max-w-xs">
-              Autonomous payment infrastructure for AI agents. Programmable budgets, verifiable
+              Autonomous Treasury infrastructure for AI agents. Programmable budgets, verifiable
               identity, real-time control.
             </p>
             <div className="flex gap-4 mt-8">
@@ -60,7 +60,7 @@ export default function Footer() {
             <a href="#" className="text-body-sm text-ink-4 hover:text-ink-2 transition-colors">Terms</a>
             <a href="#" className="text-body-sm text-ink-4 hover:text-ink-2 transition-colors">Security</a>
             <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              <span className="w-1.5 h-1.5 rounded-full FF2D78" />
               <span className="text-body-sm text-ink-4">All systems operational</span>
             </div>
           </div>

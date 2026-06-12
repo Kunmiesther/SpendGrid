@@ -22,8 +22,13 @@ function SpendStat({ label, value, mono = true, accent = false }) {
   );
 }
 
+function shortHash(hash) {
+  if (!hash) return "None";
+  return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
+}
+
 function BudgetBar({ used, total }) {
-  const pct = Math.min(100, Math.round((used / total) * 100));
+  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
   const color = pct > 85 ? "bg-red-500" : pct > 60 ? "bg-amber-500" : "bg-ink-2";
   return (
     <div className="mt-8">
@@ -44,9 +49,26 @@ function BudgetBar({ used, total }) {
 
 export default function LiveSpend() {
   const [ref, inView] = useInView(0.15);
-  const { agents, totalSpend, totalBudget, remaining, txCount, activeAgent } = useLiveSpend();
+  const {
+    activeAgent,
+    agents,
+    lastDecision,
+    lastTransactionHash,
+    loopStatus,
+    totalSpend,
+    totalBudget,
+    remaining,
+    txCount,
+  } = useLiveSpend();
 
-  const fmt = (n) => n.toLocaleString();
+  const fmt = (n) =>
+    n.toLocaleString(undefined, {
+      maximumFractionDigits: 6,
+    });
+  const decisionLabel = lastDecision
+    ? `${lastDecision.action}${lastDecision.amount ? ` ${lastDecision.amount} QIE` : ""}`
+    : "None";
+  const statusLabel = loopStatus?.inFlight ? "Executing" : loopStatus?.running ? "Running" : "Stopped";
 
   return (
     <section id="live-spend" ref={ref} className="bg-surface-0 border-t border-wire py-section">
@@ -78,15 +100,17 @@ export default function LiveSpend() {
             <div className="flex items-center gap-2 mb-10">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+<span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
               </span>
-              <span className="font-mono text-label text-ink-3 uppercase tracking-widest">Live</span>
+              <span className="font-mono text-label text-ink-3 uppercase tracking-widest">{statusLabel}</span>
             </div>
 
             <SpendStat label="Active agent" value={activeAgent.id} mono accent />
             <SpendStat label="Daily budget" value={`${fmt(totalBudget)} QIE`} accent />
             <SpendStat label="Remaining budget" value={`${fmt(remaining)} QIE`} />
             <SpendStat label="Total spent today" value={`${fmt(totalSpend)} QIE`} />
+            <SpendStat label="Last AI decision" value={decisionLabel} mono={false} />
+            <SpendStat label="Last transaction hash" value={shortHash(lastTransactionHash)} />
             <SpendStat label="Transactions today" value={fmt(txCount)} />
 
             <BudgetBar used={totalSpend} total={totalBudget} />

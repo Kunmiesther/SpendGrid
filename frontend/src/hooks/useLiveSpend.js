@@ -1,34 +1,43 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ethers } from "ethers";
 import { api } from "../lib/api";
 
 const DEFAULT_AGENT_ID = process.env.REACT_APP_AGENT_ID || "1";
 
-function toNumber(value) {
-  const raw = Number(value || 0);
-  if (!Number.isFinite(raw)) return 0;
-  return raw;
+function weiToQie(value) {
+  try {
+    return Number(ethers.formatEther(value || "0"));
+  } catch (_error) {
+    return 0;
+  }
 }
 
-function formatAgent(status, history) {
-  const agentId = status?.agentId ? status.agentId.toString() : DEFAULT_AGENT_ID;
-  const budget = status?.budget || {};
-  const dailyLimit = toNumber(budget.dailyLimit);
-  const spentToday = toNumber(budget.spentToday);
-  const paused = Boolean(budget.paused);
+function findBudget(history) {
+  const record = history.find((item) => item.budget?.enforceableLimit || item.budget?.defaultDailyLimit);
+  const budgetWei = record?.budget?.enforceableLimit || record?.budget?.defaultDailyLimit;
+  const budget = weiToQie(budgetWei);
+  return budget || Number(process.env.REACT_APP_AGENT_DAILY_LIMIT_QIE || 0);
+}
 
-  const lastAction = history.find((record) => record.eventType === "agent_run_completed")?.finalAction;
+function formatAgent(loopStatus, history) {
+  const agentId = DEFAULT_AGENT_ID;
+  const spentToday = weiToQie(loopStatus?.cumulativeSpending);
+  const paused = !loopStatus?.running;
+  const lastDecision = loopStatus?.lastDecision;
+  const lastRun = history.find((record) => record.decision || record.status);
+  const lastAction = lastDecision?.action || lastRun?.decision?.action || lastRun?.status;
 
   return {
     id: `AGT-${agentId.padStart(3, "0")}`,
     task: lastAction || "Autonomous Execution",
     spend: spentToday,
-    budget: dailyLimit,
+    budget: findBudget(history),
     status: paused ? "paused" : "active",
   };
 }
 
 export function useLiveSpend(interval = 4000) {
-  const [status, setStatus] = useState(null);
+  const [loopStatus, setLoopStatus] = useState(null);
   const [history, setHistory] = useState([]);
   const timerRef = useRef(null);
 
@@ -37,18 +46,18 @@ export function useLiveSpend(interval = 4000) {
 
     async function refresh() {
       try {
-        const [nextStatus, nextHistory] = await Promise.all([
-          api.getAgentStatus(DEFAULT_AGENT_ID),
+        const [nextLoopStatus, nextHistory] = await Promise.all([
+          api.getAgentLoopStatus(),
           api.getAgentHistory({ agentId: DEFAULT_AGENT_ID, limit: 50 }),
         ]);
 
         if (!cancelled) {
-          setStatus(nextStatus);
+          setLoopStatus(nextLoopStatus);
           setHistory(nextHistory.records || []);
         }
       } catch (_error) {
         if (!cancelled) {
-          setStatus(null);
+          setLoopStatus(null);
           setHistory([]);
         }
       }
@@ -64,19 +73,25 @@ export function useLiveSpend(interval = 4000) {
   }, [interval]);
 
   return useMemo(() => {
-    const activeAgent = formatAgent(status, history);
-    const txCount = history.filter((record) => record.eventType === "contract_interaction").length;
+    const activeAgent = formatAgent(loopStatus, history);
+    const txCount = history.filter((record) => record.transaction?.executePayment?.txHash).length;
     const totalSpend = activeAgent.spend;
     const totalBudget = activeAgent.budget;
     const remaining = Math.max(0, totalBudget - totalSpend);
+    const lastDecision = loopStatus?.lastDecision || null;
+    const lastTransactionHash = loopStatus?.lastTransactionHash || null;
 
     return {
       agents: [activeAgent],
+      history,
+      lastDecision,
+      lastTransactionHash,
+      loopStatus,
       totalSpend,
       totalBudget,
       remaining,
       txCount,
       activeAgent,
     };
-  }, [history, status]);
+  }, [history, loopStatus]);
 }

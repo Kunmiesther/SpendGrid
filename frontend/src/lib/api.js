@@ -34,4 +34,7 @@ export const api = {
   runAgent: (payload) => request("POST", "/agent/run", payload),
   getAgentStatus: (agentId) => request("GET", withQuery("/agent/status", { agentId })),
   getAgentHistory: (params) => request("GET", withQuery("/agent/history", params)),
+  startAgentLoop: (payload) => request("POST", "/agent/start-loop", payload),
+  stopAgentLoop: () => request("POST", "/agent/stop-loop"),
+  getAgentLoopStatus: () => request("GET", "/agent/loop-status"),
 };

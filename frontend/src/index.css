@@ -23,7 +23,7 @@
   }
 
   ::selection {
-    background-color: #f5f5f5;
+    background-color: #FF2D78;
     color: #080808;
   }
 
@@ -49,7 +49,7 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center gap-2 bg-ink-0 text-surface-0 font-medium text-body-sm px-6 py-3 rounded-sm transition-transform duration-150 hover:scale-95 active:scale-90;
+    @apply inline-flex items-center gap-2 bg-[#FF2D78] text-surface-0 font-medium text-body-sm px-6 py-3 rounded-sm transition-transform duration-150 hover:scale-95 active:scale-90;
   }
 
   .btn-secondary {

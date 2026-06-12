@@ -32,11 +32,12 @@ function Toggle({ enabled, onChange }) {
 
 export default function BudgetControl() {
   const [ref, inView] = useInView(0.1);
-  const { runAgent } = useAgentRuntime();
+  const { loopStatus, running, startAgent, stopAgent } = useAgentRuntime();
   const [services, setServices] = useState(SERVICES);
-  const [paused, setPaused] = useState(false);
   const [dailyLimit, setDailyLimit] = useState(136000);
   const [perAgent, setPerAgent] = useState(20000);
+  const agentRunning = Boolean(loopStatus?.running);
+  const statusLabel = loopStatus?.inFlight ? "Executing" : agentRunning ? "Running" : "Stopped";
 
   const toggleService = (id) =>
     setServices((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
@@ -73,17 +74,18 @@ export default function BudgetControl() {
             <div className="flex items-center justify-between px-8 py-5 border-b border-wire">
               <div className="flex items-center gap-3">
                 <span
-                  className={`w-2 h-2 rounded-sm ${paused ? "bg-amber-500" : "bg-green-500"}`}
+                  className={`w-2 h-2 rounded-sm ${agentRunning ? "bg-green-500" : "bg-amber-500"}`}
                 />
                 <span className="font-mono text-label uppercase tracking-widest text-ink-2">
-                  Agent SGR-0047 — {paused ? "Paused" : "Running"}
+                  Agent SGR-0047 - {statusLabel}
                 </span>
               </div>
               <button
-                onClick={() => setPaused((p) => !p)}
+                onClick={() => (agentRunning ? stopAgent() : startAgent()).catch(() => {})}
+                disabled={running}
                 className="btn-secondary text-xs px-4 py-2"
               >
-                {paused ? "Resume" : "Pause"}
+                {running ? "Working..." : agentRunning ? "Stop Agent" : "Start Agent"}
               </button>
             </div>
 
@@ -132,8 +134,12 @@ export default function BudgetControl() {
 
             {/* Apply */}
             <div className="px-8 py-5 border-t border-wire flex gap-3">
-              <button className="btn-primary" onClick={() => runAgent().catch(() => {})}>Apply policy</button>
-              <button className="btn-ghost">Reset to defaults</button>
+              <button className="btn-primary" onClick={() => startAgent().catch(() => {})} disabled={running || agentRunning}>
+                Start Agent
+              </button>
+              <button className="btn-secondary" onClick={() => stopAgent().catch(() => {})} disabled={running || !agentRunning}>
+                Stop Agent
+              </button>
             </div>
           </motion.div>
 
@@ -173,7 +179,11 @@ export default function BudgetControl() {
                 </p>
               </div>
               <div className="px-6 py-5">
-                <button className="w-full border border-red-800/50 bg-red-950/20 text-red-400 font-medium text-body-sm px-5 py-3 rounded-sm transition-transform duration-150 hover:scale-95 hover:bg-red-950/30">
+                <button
+                  onClick={() => stopAgent().catch(() => {})}
+                  disabled={running || !agentRunning}
+                  className="w-full border border-red-800/50 bg-red-950/20 text-red-400 font-medium text-body-sm px-5 py-3 rounded-sm transition-transform duration-150 hover:scale-95 hover:bg-red-950/30"
+                >
                   Kill all agents
                 </button>
               </div>

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useWallet } from "../hooks/useWallet";
-import { shortenAddress } from "../lib/wallet";
 
 const NAV_LINKS = [
   { label: "How it works", href: "#how-it-works" },
@@ -11,9 +10,24 @@ const NAV_LINKS = [
 ];
 
 export default function Nav() {
-  const { connected, shortAddress, connect, disconnect, loading } = useWallet();
+  const {
+    connected,
+    shortAddress,
+    connect,
+    copy,
+    copied,
+    disconnect,
+    error,
+    isQieTestnet,
+    loading,
+    openFaucet,
+    providers,
+    refreshProviders,
+    switchNetwork,
+  } = useWallet();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 20);
@@ -29,11 +43,9 @@ export default function Nav() {
     >
       <div className="container-grid flex items-center justify-between h-14">
         {/* Logo */}
-        <a href="/" className="flex items-center gap-2 group">
-          <span className="font-mono text-body-sm font-medium text-ink-0 tracking-tight">
-            SPEND<span className="text-ink-2">GRID</span>
-          </span>
-        </a>
+        <a href="/" className="flex items-center group">
+  SPEND<span className="text-[#FF2D78]">GRID</span>
+</a>
 
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-8">
@@ -50,19 +62,92 @@ export default function Nav() {
 
         {/* Wallet + Menu */}
         <div className="flex items-center gap-3">
-          <button
-            onClick={connected ? disconnect : connect}
-            disabled={loading}
-            className="btn-secondary text-xs px-4 py-2"
-          >
-            {loading ? (
-              <span className="font-mono text-xs text-ink-3">Connecting...</span>
-            ) : connected ? (
-              <span className="font-mono text-xs text-ink-0">{shortAddress}</span>
-            ) : (
-              "Connect wallet"
-            )}
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => {
+                refreshProviders();
+                setWalletOpen((open) => !open);
+              }}
+              disabled={loading}
+              className="btn-secondary text-xs px-4 py-2"
+            >
+              {loading ? (
+                <span className="font-mono text-xs text-ink-3">Connecting...</span>
+              ) : connected ? (
+                <span className="font-mono text-xs text-ink-0">{shortAddress}</span>
+              ) : (
+                "Connect Wallet"
+              )}
+            </button>
+
+            <AnimatePresence>
+              {walletOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                  className="absolute right-0 mt-2 w-48 bg-surface-1 border border-wire rounded-sm overflow-hidden"
+                >
+                  {!connected &&
+                    providers.map((wallet) => (
+                      <button
+                        key={wallet.id}
+                        onClick={() => connect(wallet.id).then(() => setWalletOpen(false)).catch(() => {})}
+                        className="w-full text-left px-4 py-3 border-b border-wire last:border-b-0 text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
+                      >
+                        {wallet.label}
+                      </button>
+                    ))}
+
+                  {!connected && providers.length === 0 && (
+                    <div className="px-4 py-3 text-body-sm text-ink-3">No wallet found</div>
+                  )}
+
+                  {error && (
+                    <div className="px-4 py-3 border-b border-wire text-body-sm text-red-400">
+                      {error}
+                    </div>
+                  )}
+
+                  {connected && !isQieTestnet && (
+                    <button
+                      onClick={() => switchNetwork().catch(() => {})}
+                      className="w-full text-left px-4 py-3 border-b border-wire text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
+                    >
+                      Switch Network
+                    </button>
+                  )}
+
+                  {connected && (
+                    <>
+                      <button
+                        onClick={() => copy().catch(() => {})}
+                        className="w-full text-left px-4 py-3 border-b border-wire text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
+                      >
+                        {copied ? "Copied" : "Copy address"}
+                      </button>
+                      <button
+                        onClick={openFaucet}
+                        className="w-full text-left px-4 py-3 border-b border-wire text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
+                      >
+                        Claim Faucet
+                      </button>
+                      <button
+                        onClick={() => {
+                          disconnect();
+                          setWalletOpen(false);
+                        }}
+                        className="w-full text-left px-4 py-3 text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
+                      >
+                        Disconnect
+                      </button>
+                    </>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
 
           {/* Hamburger */}
           <button

@@ -22,7 +22,7 @@ export default function Hero() {
           custom={0}
           className="mb-10"
         >
-          <span className="tag">v1.0 — Now on QIE Mainnet</span>
+          <span className="tag">v1.0 — NOW ON QIE TESTNET</span>
         </motion.div>
 
         {/* Headline */}
@@ -33,7 +33,7 @@ export default function Hero() {
           custom={1}
           className="text-display-xl font-sans font-medium text-ink-0 text-balance max-w-[900px] mb-7"
         >
-          Autonomous payment infrastructure
+          Autonomous Treasury infrastructure
           <br className="hidden lg:block" /> for AI agents.
         </motion.h1>
 
