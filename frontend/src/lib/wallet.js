@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import EthereumProvider from "@walletconnect/ethereum-provider";
 
 export const QIE_TESTNET = {
   chainId: 1983,
@@ -14,22 +15,62 @@ export const QIE_TESTNET = {
 };
 
 const WALLET_STORAGE_KEY = "spendgrid.wallet";
+const WALLETCONNECT_PROJECT_ID = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID || "SPENDGRID_QIE_TESTNET";
+const WALLETCONNECT_ID = "walletconnect";
+
+const WALLET_PRIORITIES = {
+  qie: 0,
+  metamask: 1,
+  rabby: 2,
+  walletconnect: 100,
+};
 
 function getInjectedProviders() {
-  if (typeof window === "undefined" || !window.ethereum) return [];
-  const detected = window.ethereum.providers?.length ? window.ethereum.providers : [window.ethereum];
-  return detected.filter((provider, index, providers) => providers.indexOf(provider) === index);
+  if (typeof window === "undefined") return [];
+  const detected = [];
+  if (Array.isArray(window.ethereum?.providers)) {
+    detected.push(...window.ethereum.providers);
+  }
+  if (window.ethereum) {
+    detected.push(window.ethereum);
+  }
+
+  [
+    window.qie,
+    window.qieWallet,
+    window.qieEthereum,
+    window.metamask?.ethereum,
+    window.rabby?.ethereum,
+  ].forEach((provider) => {
+    if (provider) detected.push(provider);
+  });
+
+  return detected.filter((provider, index, providers) => provider && providers.indexOf(provider) === index);
 }
 
-function providerLabel(provider) {
-  if (provider.isRabby) return "Rabby";
-  if (provider.isMetaMask) return "MetaMask";
-  if (provider.isCoinbaseWallet) return "Coinbase Wallet";
-  if (provider.isTrust) return "Trust Wallet";
-  return "Injected Wallet";
+function isQieProvider(provider) {
+  return Boolean(
+    provider?.isQIE ||
+      provider?.isQie ||
+      provider?.isQieWallet ||
+      provider?.isQIEWallet ||
+      provider?.qieWallet ||
+      provider?.walletName?.toLowerCase?.().includes("qie") ||
+      provider?.name?.toLowerCase?.().includes("qie")
+  );
 }
 
-function providerId(provider, index) {
+function providerLabel(type, index) {
+  if (type === "qie") return "QIE Wallet";
+  if (type === "metamask") return "MetaMask";
+  if (type === "rabby") return "Rabby";
+  if (type === "coinbase") return "Coinbase Wallet";
+  if (type === "trust") return "Trust Wallet";
+  return index === 0 ? "Injected Wallet" : `Injected Wallet ${index + 1}`;
+}
+
+function providerKind(provider, index) {
+  if (isQieProvider(provider)) return "qie";
   if (provider.isRabby) return "rabby";
   if (provider.isMetaMask) return "metamask";
   if (provider.isCoinbaseWallet) return "coinbase";
@@ -38,11 +79,39 @@ function providerId(provider, index) {
 }
 
 export function getWalletProviders() {
-  return getInjectedProviders().map((provider, index) => ({
-    id: providerId(provider, index),
-    label: providerLabel(provider),
-    provider,
-  }));
+  const seenKinds = new Set();
+  const injected = getInjectedProviders()
+    .map((provider, index) => {
+      const type = providerKind(provider, index);
+      return {
+        id: type.startsWith("injected-") ? type : `injected-${type}`,
+        type,
+        label: providerLabel(type, index),
+        subtitle: type === "qie" ? "Recommended for QIE Network" : null,
+        provider,
+        connector: "injected",
+        priority: WALLET_PRIORITIES[type] ?? 10 + index,
+      };
+    })
+    .filter((wallet) => {
+      if (wallet.type.startsWith("injected-")) return true;
+      if (seenKinds.has(wallet.type)) return false;
+      seenKinds.add(wallet.type);
+      return true;
+    });
+
+  return [
+    ...injected,
+    {
+      id: WALLETCONNECT_ID,
+      type: WALLETCONNECT_ID,
+      label: "WalletConnect",
+      subtitle: "Scan with WalletConnect",
+      provider: null,
+      connector: WALLETCONNECT_ID,
+      priority: WALLET_PRIORITIES.walletconnect,
+    },
+  ].sort((a, b) => a.priority - b.priority || a.label.localeCompare(b.label));
 }
 
 export function getStoredWalletId() {
@@ -66,14 +135,47 @@ export function getProviderById(walletId) {
   return providers.find((wallet) => wallet.id === walletId) || null;
 }
 
+async function createWalletConnectProvider() {
+  if (!WALLETCONNECT_PROJECT_ID || WALLETCONNECT_PROJECT_ID === "SPENDGRID_QIE_TESTNET") {
+    throw new Error("REACT_APP_WALLETCONNECT_PROJECT_ID is required for WalletConnect.");
+  }
+
+  const provider = await EthereumProvider.init({
+    projectId: WALLETCONNECT_PROJECT_ID,
+    chains: [QIE_TESTNET.chainId],
+    optionalChains: [QIE_TESTNET.chainId],
+    showQrModal: true,
+    rpcMap: {
+      [QIE_TESTNET.chainId]: QIE_TESTNET.rpcUrls[0],
+    },
+    metadata: {
+      name: "SpendGrid",
+      description: "SpendGrid AI agent payment dashboard",
+      url: window.location.origin,
+      icons: [`${window.location.origin}/favicon.ico`],
+    },
+  });
+
+  await provider.enable();
+  return provider;
+}
+
 export async function connectWallet(walletId) {
+  if (!walletId) {
+    throw new Error("Select a wallet provider to connect.");
+  }
+
   const selected = getProviderById(walletId);
   if (!selected) {
     throw new Error("Selected wallet provider is not available.");
   }
 
-  await selected.provider.request({ method: "eth_requestAccounts" });
-  const provider = new ethers.BrowserProvider(selected.provider);
+  const rawProvider = selected.connector === WALLETCONNECT_ID
+    ? await createWalletConnectProvider()
+    : selected.provider;
+
+  await rawProvider.request({ method: "eth_requestAccounts" });
+  const provider = new ethers.BrowserProvider(rawProvider);
   const signer = await provider.getSigner();
   const address = await signer.getAddress();
   const { chainId } = await provider.getNetwork();
@@ -86,7 +188,7 @@ export async function connectWallet(walletId) {
 
   return {
     provider,
-    rawProvider: selected.provider,
+    rawProvider,
     signer,
     address,
     chainId: Number(chainId),

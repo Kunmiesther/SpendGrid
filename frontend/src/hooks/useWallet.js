@@ -83,8 +83,7 @@ export function useWallet() {
   const connect = useCallback(async (walletId) => {
     setState((s) => ({ ...s, loading: true, error: null, copied: false }));
     try {
-      const selectedWalletId = walletId || getStoredWalletId();
-      const result = await connectWallet(selectedWalletId);
+      const result = await connectWallet(walletId);
       setState((s) => ({
         ...s,
         address: result.address,

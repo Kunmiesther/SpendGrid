@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@reown/appkit": "^1.8.20",
+    "@walletconnect/ethereum-provider": "^2.23.9",
+    "ethers": "^6.9.0",
+    "framer-motion": "^11.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "framer-motion": "^11.0.0",
-    "ethers": "^6.9.0",
     "react-scripts": "5.0.1"
   },
   "scripts": {
@@ -14,7 +16,12 @@
     "build": "react-scripts build"
   },
   "browserslist": {
-    "production": [">0.2%", "not dead"],
-    "development": ["last 1 chrome version"]
+    "production": [
+      ">0.2%",
+      "not dead"
+    ],
+    "development": [
+      "last 1 chrome version"
+    ]
   }
 }

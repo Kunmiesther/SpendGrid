@@ -96,7 +96,12 @@ export default function Nav() {
                         onClick={() => connect(wallet.id).then(() => setWalletOpen(false)).catch(() => {})}
                         className="w-full text-left px-4 py-3 border-b border-wire last:border-b-0 text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
                       >
-                        {wallet.label}
+                        <span className="block">{wallet.label}</span>
+                        {wallet.subtitle && (
+                          <span className="block font-mono text-label uppercase tracking-widest text-ink-3 mt-1">
+                            {wallet.subtitle}
+                          </span>
+                        )}
                       </button>
                     ))}
 
