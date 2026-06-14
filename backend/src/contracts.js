@@ -1,10 +1,12 @@
 const { ethers } = require("ethers");
 const { CHAIN_ID, loadArtifact, loadDeployment } = require("./deployment");
+const { FACTORY_ABI, ROUTER_ABI } = require("../services/liquidityEngine");
 
 const ERC20_ABI = [
   "function approve(address spender,uint256 amount) external returns (bool)",
   "function allowance(address owner,address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
+  "function transfer(address to,uint256 amount) external returns (bool)",
   "function decimals() external view returns (uint8)"
 ];
 
@@ -36,6 +38,10 @@ function makeContracts() {
   const registry = new ethers.Contract(deployment.addresses.agentRegistry, registryArtifact.abi, signer);
   const controller = new ethers.Contract(deployment.addresses.spendController, controllerArtifact.abi, signer);
   const vault = new ethers.Contract(deployment.addresses.streamVault, vaultArtifact.abi, signer);
+  const qusdc = new ethers.Contract(deployment.addresses.qusdc, ERC20_ABI, signer);
+  const wqie = new ethers.Contract(deployment.addresses.wqie, ERC20_ABI, signer);
+  const qiedexRouter = new ethers.Contract(deployment.addresses.qiedexRouter, ROUTER_ABI, signer);
+  const qiedexFactory = new ethers.Contract(deployment.addresses.qiedexFactory, FACTORY_ABI, signer);
 
   return {
     deployment,
@@ -45,12 +51,18 @@ function makeContracts() {
       registry: deployment.addresses.agentRegistry,
       controller: deployment.addresses.spendController,
       vault: deployment.addresses.streamVault,
-      stablecoin: deployment.addresses.mockQIEStable
+      qiedexRouter: deployment.addresses.qiedexRouter,
+      qiedexFactory: deployment.addresses.qiedexFactory,
+      wqie: deployment.addresses.wqie,
+      qusdc: deployment.addresses.qusdc
     },
     registry,
     controller,
     vault,
-    stablecoin: new ethers.Contract(deployment.addresses.mockQIEStable, ERC20_ABI, signer)
+    qiedexRouter,
+    qiedexFactory,
+    qusdc,
+    wqie
   };
 }
 

@@ -4,11 +4,14 @@ const { assertQieTestnet, makeStreamVaultAdapter } = require("./contracts");
 const { CHAIN_ID, NETWORK_NAME } = require("./deployment");
 const { bigintJson, createId, findEvent, hashPrompt, nowIso, toPositiveUint } = require("./utils");
 
+const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
+
 class AutonomousAgentEngine {
   constructor(contracts, ledger, options = {}) {
     this.contracts = contracts;
     this.streamVault = makeStreamVaultAdapter(contracts.vault);
     this.ledger = ledger;
+    this.liquidityEngine = options.liquidityEngine || null;
     const configuredDailyLimit = options.defaultDailyLimit || process.env.DEFAULT_DAILY_LIMIT;
     if (!configuredDailyLimit) {
       throw new Error("DEFAULT_DAILY_LIMIT is required for autonomous spending safety");
@@ -194,6 +197,10 @@ class AutonomousAgentEngine {
   }
 
   async _createStream({ runId, agentId, receiver, ratePerUnit }) {
+    const funding = await this._ensureQusdcForPayment(ratePerUnit);
+    if (!funding.sufficient) {
+      throw new Error(`QUSDC balance is insufficient for payment: ${funding.reason || "INSUFFICIENT_QUSDC"}`);
+    }
     const tx = await this.streamVault.createStream(agentId, receiver, ratePerUnit);
     const receipt = await tx.wait();
     const event = findEvent(receipt, this.streamVault.interface, "StreamCreated");
@@ -213,6 +220,10 @@ class AutonomousAgentEngine {
   }
 
   async _executePayment({ runId, agentId, streamId, units, amount, ratePerUnit }) {
+    const funding = await this._ensureQusdcForPayment(amount);
+    if (!funding.sufficient) {
+      throw new Error(`QUSDC balance is insufficient for payment: ${funding.reason || "INSUFFICIENT_QUSDC"}`);
+    }
     const tx = await this.streamVault.executePayment(streamId, units);
     const receipt = await tx.wait();
 
@@ -296,6 +307,81 @@ class AutonomousAgentEngine {
     if (!canSpendFor) {
       throw new Error("SpendController rejected the proposed payment");
     }
+  }
+
+  async _ensureQusdcForPayment(amount) {
+    const owner = await this.contracts.signer.getAddress();
+    const requiredAmount = BigInt(amount);
+    const balance = BigInt(await this.contracts.qusdc.balanceOf(owner));
+
+    this.ledger.append({
+      eventType: "qusdc_balance_check",
+      owner,
+      token: this.contracts.addresses.qusdc,
+      requiredAmount,
+      balance,
+      sufficient: balance >= requiredAmount
+    });
+
+    if (balance >= requiredAmount) {
+      return { sufficient: true, balance: balance.toString() };
+    }
+
+    if (!this.liquidityEngine) {
+      this.ledger.append({
+        eventType: "qiedex_swap",
+        inputToken: this.contracts.addresses.wqie,
+        outputToken: this.contracts.addresses.qusdc,
+        amountIn: requiredAmount,
+        txHash: null,
+        status: "skipped",
+        reason: "LIQUIDITY_ENGINE_UNAVAILABLE",
+        recipient: owner
+      });
+      return { sufficient: false, reason: "LIQUIDITY_ENGINE_UNAVAILABLE", balance: balance.toString() };
+    }
+
+    const pair = await this.liquidityEngine.checkPairExists(this.contracts.addresses.wqie, this.contracts.addresses.qusdc);
+    if (!pair || pair.toLowerCase?.() === ZERO_ADDRESS) {
+      this.ledger.append({
+        eventType: "qiedex_swap",
+        inputToken: this.contracts.addresses.wqie,
+        outputToken: this.contracts.addresses.qusdc,
+        amountIn: requiredAmount,
+        txHash: null,
+        status: "skipped",
+        reason: "NO_LIQUIDITY_SKIP_SWAP",
+        recipient: owner
+      });
+      return { sufficient: false, reason: "NO_LIQUIDITY_SKIP_SWAP", balance: balance.toString() };
+    }
+
+    const swap = await this.liquidityEngine.ensureQusdcBalance({
+      tokenIn: this.contracts.addresses.wqie,
+      tokenOut: this.contracts.addresses.qusdc,
+      inputTokenContract: this.contracts.wqie,
+      owner,
+      requiredAmount,
+      amountIn: requiredAmount
+    });
+
+    const nextBalance = BigInt(await this.contracts.qusdc.balanceOf(owner));
+    this.ledger.append({
+      eventType: "qusdc_balance_check",
+      owner,
+      token: this.contracts.addresses.qusdc,
+      requiredAmount,
+      balance: nextBalance,
+      sufficient: nextBalance >= requiredAmount,
+      afterSwap: true
+    });
+
+    return {
+      sufficient: nextBalance >= requiredAmount,
+      reason: nextBalance >= requiredAmount ? null : swap?.reason || "INSUFFICIENT_QUSDC_AFTER_SWAP",
+      balance: nextBalance.toString(),
+      swap
+    };
   }
 
   _logContractInteraction(fields) {

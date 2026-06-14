@@ -5,6 +5,7 @@ const express = require("express");
 const { ethers } = require("ethers");
 const { AgentLoop } = require("./services/agentLoop");
 const { AgentRuntime } = require("./services/agentRuntime");
+const { LiquidityEngine } = require("./services/liquidityEngine");
 const { AutonomousAgentEngine } = require("./src/engine");
 const { makeContracts } = require("./src/contracts");
 const { AgentLedger } = require("./src/ledger");
@@ -34,13 +35,36 @@ async function getBlockchainRuntime(runtime) {
 
   const contracts = makeContracts();
   const ledger = new AgentLedger();
-  const engine = new AutonomousAgentEngine(contracts, ledger);
+  const vaultToken = await contracts.vault.qieStablecoin();
+  if (ethers.getAddress(vaultToken) !== ethers.getAddress(contracts.addresses.qusdc)) {
+    throw new Error(
+      `StreamVault payment token must be QUSDC ${contracts.addresses.qusdc}; deployed vault is wired to ${vaultToken}`
+    );
+  }
+  let liquidityEngine = null;
+  try {
+    liquidityEngine = new LiquidityEngine({
+      factory: contracts.qiedexFactory,
+      router: contracts.qiedexRouter,
+      wqie: contracts.addresses.wqie,
+      qusdc: contracts.addresses.qusdc,
+      ledger
+    });
+  } catch (error) {
+    ledger.append({
+      eventType: "qiedex_liquidity_engine",
+      status: "disabled",
+      reason: error.shortMessage || error.message
+    });
+  }
+  const engine = new AutonomousAgentEngine(contracts, ledger, { liquidityEngine });
   await engine.start();
 
   runtime.blockchainRuntime = {
     contracts,
     engine,
-    ledger
+    ledger,
+    liquidityEngine
   };
 
   return runtime.blockchainRuntime;
@@ -120,7 +144,7 @@ function makeApp(runtime = makeRuntime()) {
       let approvalHash = null;
       if (req.body.approveAmount) {
         const approveAmount = toUint(req.body.approveAmount, "approveAmount");
-        const approveTx = await contracts.stablecoin.approve(contracts.addresses.vault, approveAmount);
+        const approveTx = await contracts.qusdc.approve(contracts.addresses.vault, approveAmount);
         await approveTx.wait();
         approvalHash = approveTx.hash;
       }

@@ -3,6 +3,7 @@ const { ethers } = require("ethers");
 const { LLMProvider } = require("./llmProvider");
 
 const WEI_PER_QIE = 10n ** 18n;
+const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
 
 function nowIso() {
   return new Date().toISOString();
@@ -217,6 +218,11 @@ class AgentRuntime {
     let createTxRecord = null;
     let ratePerUnit = spendPlan.ratePerUnit;
 
+    const funding = await this._ensureQusdcForPayment(runtime, spendPlan.amountWei);
+    if (!funding.sufficient) {
+      throw new Error(`QUSDC balance is insufficient for payment: ${funding.reason || "INSUFFICIENT_QUSDC"}`);
+    }
+
     if (!resolvedStreamId) {
       const receiver = spendPlan.receiver || input?.receiver || this.defaultReceiver || (await contracts.signer.getAddress());
       if (!receiver || !ethers.isAddress(receiver)) {
@@ -286,6 +292,81 @@ class AgentRuntime {
     if (!allowed) {
       throw new Error("SpendController rejected the AI spending decision");
     }
+  }
+
+  async _ensureQusdcForPayment(runtime, amountWei) {
+    const { contracts, ledger, liquidityEngine } = runtime;
+    const owner = await contracts.signer.getAddress();
+    const amount = BigInt(amountWei);
+    const balance = BigInt(await contracts.qusdc.balanceOf(owner));
+
+    ledger?.append?.({
+      eventType: "qusdc_balance_check",
+      owner,
+      token: contracts.addresses.qusdc,
+      requiredAmount: amount,
+      balance,
+      sufficient: balance >= amount
+    });
+
+    if (balance >= amount) {
+      return { sufficient: true, balance: balance.toString() };
+    }
+
+    if (!liquidityEngine) {
+      ledger?.append?.({
+        eventType: "qiedex_swap",
+        inputToken: contracts.addresses.wqie,
+        outputToken: contracts.addresses.qusdc,
+        amountIn: amount,
+        txHash: null,
+        status: "skipped",
+        reason: "LIQUIDITY_ENGINE_UNAVAILABLE",
+        recipient: owner
+      });
+      return { sufficient: false, reason: "LIQUIDITY_ENGINE_UNAVAILABLE" };
+    }
+
+    const pair = await liquidityEngine.checkPairExists(contracts.addresses.wqie, contracts.addresses.qusdc);
+    if (!pair || pair.toLowerCase?.() === ZERO_ADDRESS) {
+      ledger?.append?.({
+        eventType: "qiedex_swap",
+        inputToken: contracts.addresses.wqie,
+        outputToken: contracts.addresses.qusdc,
+        amountIn: amount,
+        txHash: null,
+        status: "skipped",
+        reason: "NO_LIQUIDITY_SKIP_SWAP",
+        recipient: owner
+      });
+      return { sufficient: false, reason: "NO_LIQUIDITY_SKIP_SWAP" };
+    }
+
+    const swap = await liquidityEngine.ensureQusdcBalance({
+      tokenIn: contracts.addresses.wqie,
+      tokenOut: contracts.addresses.qusdc,
+      inputTokenContract: contracts.wqie,
+      owner,
+      requiredAmount: amount,
+      amountIn: amount
+    });
+
+    const nextBalance = BigInt(await contracts.qusdc.balanceOf(owner));
+    ledger?.append?.({
+      eventType: "qusdc_balance_check",
+      owner,
+      token: contracts.addresses.qusdc,
+      requiredAmount: amount,
+      balance: nextBalance,
+      sufficient: nextBalance >= amount,
+      afterSwap: true
+    });
+
+    return {
+      sufficient: nextBalance >= amount,
+      balance: nextBalance.toString(),
+      swap
+    };
   }
 
   _assertBackendLimit(context, amountWei) {
