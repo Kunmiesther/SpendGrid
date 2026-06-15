@@ -1,4 +1,6 @@
-require("dotenv").config();
+const { loadEnv } = require("./src/env");
+
+loadEnv();
 
 const cors = require("cors");
 const express = require("express");
@@ -9,7 +11,48 @@ const { LiquidityEngine } = require("./services/liquidityEngine");
 const { AutonomousAgentEngine } = require("./src/engine");
 const { makeContracts } = require("./src/contracts");
 const { AgentLedger } = require("./src/ledger");
+const { loadDeployment } = require("./src/deployment");
 const { bigintJson, findEvent, normalizeBytes32, toPositiveUint, toUint } = require("./src/utils");
+
+function logStartupConfig() {
+  let parsedDefaultDailyLimit = null;
+  let parsedTestModeLimit = null;
+  let resolvedQusdc = null;
+  let resolvedQusdcSource = null;
+  try {
+    parsedDefaultDailyLimit = BigInt(process.env.DEFAULT_DAILY_LIMIT || "").toString();
+  } catch (_error) {
+    parsedDefaultDailyLimit = "INVALID";
+  }
+  try {
+    parsedTestModeLimit = ethers.parseUnits(
+      String(process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "1"),
+      18
+    ).toString();
+  } catch (_error) {
+    parsedTestModeLimit = "INVALID";
+  }
+  try {
+    const deployment = loadDeployment();
+    resolvedQusdc = deployment.addresses.qusdc;
+    resolvedQusdcSource = process.env.QUSDC_ADDRESS ? "env" : "deployment";
+  } catch (error) {
+    resolvedQusdc = error.message;
+    resolvedQusdcSource = "unresolved";
+  }
+
+  console.log(JSON.stringify({
+    eventType: "startup_config",
+    DEFAULT_DAILY_LIMIT: process.env.DEFAULT_DAILY_LIMIT || null,
+    parsedDefaultDailyLimit,
+    TEST_MODE_LIMIT: process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "1",
+    parsedTestModeLimit,
+    QIE_STABLECOIN_ADDRESS: process.env.QIE_STABLECOIN_ADDRESS || null,
+    QUSDC_ADDRESS: process.env.QUSDC_ADDRESS || null,
+    resolvedQusdc,
+    resolvedQusdcSource
+  }));
+}
 
 function makeRuntime() {
   const runtime = {
@@ -36,10 +79,22 @@ async function getBlockchainRuntime(runtime) {
   const contracts = makeContracts();
   const ledger = new AgentLedger();
   const vaultToken = await contracts.vault.qieStablecoin();
-  if (ethers.getAddress(vaultToken) !== ethers.getAddress(contracts.addresses.qusdc)) {
-    throw new Error(
-      `StreamVault payment token must be QUSDC ${contracts.addresses.qusdc}; deployed vault is wired to ${vaultToken}`
-    );
+  const tokenMatchesQusdc = ethers.getAddress(vaultToken) === ethers.getAddress(contracts.addresses.qusdc);
+  ledger.append({
+    eventType: "qusdc_config",
+    status: tokenMatchesQusdc ? "ok" : "mismatch",
+    runtimeQusdc: contracts.addresses.qusdc,
+    vaultToken,
+    source: process.env.QUSDC_ADDRESS ? "env" : "deployment"
+  });
+  if (!tokenMatchesQusdc) {
+    ledger.append({
+      eventType: "qusdc_config_warning",
+      status: "warning",
+      runtimeQusdc: contracts.addresses.qusdc,
+      vaultToken,
+      reason: "StreamVault payment token differs from configured QUSDC; runtime QUSDC was not overwritten"
+    });
   }
   let liquidityEngine = null;
   try {
@@ -229,6 +284,7 @@ function makeApp(runtime = makeRuntime()) {
 }
 
 function start() {
+  logStartupConfig();
   const runtime = makeRuntime();
   const port = Number(process.env.PORT || 8080);
   makeApp(runtime).listen(port, () => {

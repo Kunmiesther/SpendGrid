@@ -65,7 +65,7 @@ class LLMProvider {
       "Return STRICT JSON ONLY. Do not wrap in markdown. Do not include prose outside JSON.",
       'Schema: {"action":"spend"|"hold","amount":number,"reasoning":"string"}',
       "The amount is denominated in whole QIE token units, not wei/base units.",
-      "Never choose an amount greater than budgetRemaining.",
+      "Never choose an amount greater than budgetRemaining or safeSpendLimit.",
       "Choose hold with amount 0 when value is unclear, budget is insufficient, or history suggests risk."
     ].join(" ");
 

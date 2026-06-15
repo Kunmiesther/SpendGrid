@@ -1,9 +1,12 @@
 const crypto = require("crypto");
 const { ethers } = require("ethers");
+const { ERC20_ABI } = require("../src/contracts");
+const { CHAIN_ID } = require("../src/deployment");
 const { LLMProvider } = require("./llmProvider");
 
 const WEI_PER_QIE = 10n ** 18n;
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
+const DEFAULT_TEST_MODE_LIMIT_QIE = "1";
 
 function nowIso() {
   return new Date().toISOString();
@@ -28,11 +31,168 @@ function bigintJson(value) {
   );
 }
 
+function readPositiveBigInt(value, label) {
+  if (value === undefined || value === null || value === "") {
+    throw new Error(`${label} is required and must be greater than zero`);
+  }
+
+  const parsed = BigInt(value);
+  if (parsed <= 0n) {
+    throw new Error(`${label} is required and must be greater than zero`);
+  }
+
+  return parsed;
+}
+
+function parseQieToWei(value, label) {
+  if (value === undefined || value === null || value === "") {
+    throw new Error(`${label} is required and must be greater than zero`);
+  }
+
+  const parsed = ethers.parseUnits(String(value), 18);
+  if (parsed <= 0n) {
+    throw new Error(`${label} must be greater than zero`);
+  }
+
+  return parsed;
+}
+
+function readTestModeLimitWei(options = {}) {
+  if (options.testModeLimitWei || process.env.TEST_MODE_LIMIT_WEI) {
+    return readPositiveBigInt(options.testModeLimitWei || process.env.TEST_MODE_LIMIT_WEI, "TEST_MODE_LIMIT_WEI");
+  }
+
+  return parseQieToWei(
+    options.testModeLimit || process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || DEFAULT_TEST_MODE_LIMIT_QIE,
+    "TEST_MODE_LIMIT"
+  );
+}
+
+function qieToWei(amount) {
+  const rounded = Math.floor(Number(amount) * 1_000_000);
+  return (BigInt(rounded) * WEI_PER_QIE) / 1_000_000n;
+}
+
+function weiToQieNumber(amountWei) {
+  return Number(ethers.formatUnits(amountWei, 18));
+}
+
+function normalizeAddress(value) {
+  if (!value || !ethers.isAddress(value)) {
+    return null;
+  }
+
+  return ethers.getAddress(value);
+}
+
+function sameAddress(left, right) {
+  const normalizedLeft = normalizeAddress(left);
+  const normalizedRight = normalizeAddress(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function minimumConstraint(constraints) {
+  return constraints.reduce((current, next) => (next.value < current.value ? next : current));
+}
+
+function spendLimitFromConstraints(constraints, zeroGateNames = []) {
+  const zeroGateSet = new Set(zeroGateNames);
+  const zeroGateConstraints = constraints.filter((constraint) => zeroGateSet.has(constraint.name));
+  const allZeroGateConstraints = zeroGateConstraints.every((constraint) => constraint.value === 0n);
+
+  if (allZeroGateConstraints) {
+    return {
+      safeSpendLimitWei: 0n,
+      limitingConstraint: zeroGateConstraints
+        .filter((constraint) => constraint.value === 0n)
+        .map((constraint) => constraint.name)
+        .join("+"),
+      ignoredZeroConstraints: []
+    };
+  }
+
+  const positiveConstraints = constraints.filter((constraint) => constraint.value > 0n);
+  const limitingConstraint = minimumConstraint(positiveConstraints);
+
+  return {
+    safeSpendLimitWei: limitingConstraint.value,
+    limitingConstraint: limitingConstraint.name,
+    ignoredZeroConstraints: constraints
+      .filter((constraint) => constraint.value === 0n)
+      .map((constraint) => constraint.name)
+  };
+}
+
+function extractJsonObject(content) {
+  const text = String(content || "").trim();
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    // Continue with block extraction below.
+  }
+
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch (_error) {
+      // Continue with balanced object extraction below.
+    }
+  }
+
+  const start = text.indexOf("{");
+  if (start === -1) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, index + 1));
+        } catch (_error) {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 class AgentRuntime {
   constructor(options = {}) {
     this.llmProvider = options.llmProvider || new LLMProvider(options.llm);
     this.getBlockchainRuntime = options.getBlockchainRuntime;
-    this.defaultDailyLimit = BigInt(options.defaultDailyLimit || process.env.DEFAULT_DAILY_LIMIT || "0");
+    this.defaultDailyLimit = readPositiveBigInt(
+      options.defaultDailyLimit || process.env.DEFAULT_DAILY_LIMIT,
+      "DEFAULT_DAILY_LIMIT"
+    );
+    this.testModeLimit = readTestModeLimitWei(options);
     this.defaultAgentId = options.defaultAgentId || process.env.AGENT_ID || "1";
     this.defaultReceiver = options.defaultReceiver || process.env.AGENT_RECEIVER;
     this.defaultStreamId = options.defaultStreamId || process.env.AGENT_STREAM_ID;
@@ -43,9 +203,6 @@ class AgentRuntime {
 
     if (!this.getBlockchainRuntime) {
       throw new Error("AgentRuntime requires getBlockchainRuntime");
-    }
-    if (this.defaultDailyLimit <= 0n) {
-      throw new Error("DEFAULT_DAILY_LIMIT is required and must be greater than zero");
     }
   }
 
@@ -95,26 +252,28 @@ class AgentRuntime {
 
       const decisionResult = await this.llmProvider.decideEconomicAction({
         task,
-        budgetRemaining: context.budgetRemainingQie,
+        budgetRemaining: context.safeSpendLimitQie,
+        safeSpendLimit: context.safeSpendLimitQie,
         recentHistory: context.recentHistory
       });
 
-      const decision = this._parseDecision(decisionResult.content, context.budgetRemainingQie);
+      const decision = this._parseDecision(decisionResult.content, context.safeSpendLimitQie);
+      const clampedDecision = this._clampDecision(decision, context.safeSpendLimitWei);
       record.decision = {
-        ...decision,
+        ...clampedDecision,
         model: decisionResult.model,
         usage: decisionResult.usage || null,
         providerResponseId: decisionResult.providerResponseId || null
       };
 
-      if (decision.action === "hold") {
+      if (clampedDecision.action === "hold") {
         record.status = "held";
         record.completedAt = nowIso();
         this._store(record);
         return bigintJson(record);
       }
 
-      const requestedAmountWei = this._qieToWei(decision.amount);
+      const requestedAmountWei = this._qieToWei(clampedDecision.amount);
       await this._assertBackendLimit(context, requestedAmountWei);
 
       const spendPlan = await this._planSpend(runtime, agentId, requestedAmountWei, input);
@@ -140,9 +299,59 @@ class AgentRuntime {
     }
   }
 
+  _resolveQusdcAddress(runtime) {
+    const { contracts } = runtime;
+    const configuredQusdc = normalizeAddress(
+      process.env.QUSDC_ADDRESS
+      || contracts.deployment?.addresses?.qusdc
+      || contracts.deployment?.qieStablecoin
+      || contracts.deployment?.stable
+      || contracts.deployment?.qusdc
+      || contracts.addresses?.qusdc
+    );
+
+    if (!configuredQusdc) {
+      throw new Error("QUSDC_ADDRESS is required or must be present in deployment config");
+    }
+    if (sameAddress(configuredQusdc, contracts.addresses?.wqie)) {
+      throw new Error(`QUSDC address resolves to WQIE address ${configuredQusdc}`);
+    }
+    if (sameAddress(configuredQusdc, contracts.addresses?.vault)) {
+      throw new Error(`QUSDC address resolves to StreamVault address ${configuredQusdc}`);
+    }
+
+    return configuredQusdc;
+  }
+
+  _ensureRuntimeQusdc(runtime) {
+    const { contracts } = runtime;
+    const resolvedQusdc = this._resolveQusdcAddress(runtime);
+    const currentQusdc = normalizeAddress(contracts.addresses?.qusdc);
+
+    if (currentQusdc !== resolvedQusdc) {
+      runtime.ledger?.append?.({
+        eventType: "qusdc_config",
+        status: "corrected",
+        previousRuntimeQusdc: currentQusdc,
+        runtimeQusdc: resolvedQusdc,
+        source: process.env.QUSDC_ADDRESS ? "env" : "deployment"
+      });
+      contracts.addresses = {
+        ...contracts.addresses,
+        qusdc: resolvedQusdc
+      };
+      contracts.qusdc = new ethers.Contract(resolvedQusdc, ERC20_ABI, contracts.signer);
+    }
+
+    return resolvedQusdc;
+  }
+
   async _buildDecisionContext(runtime, agentId) {
+    this._ensureRuntimeQusdc(runtime);
     const { contracts, ledger } = runtime;
     const budget = await contracts.controller.getBudget(agentId);
+    const owner = await contracts.signer.getAddress();
+    const qusdcBalance = BigInt(await contracts.qusdc.balanceOf(owner));
     const onChainDailyLimit = BigInt(budget.dailyLimit || 0);
     const onChainSpent = BigInt(budget.spentToday || 0);
     const localSpent = this._localSpendToday(agentId);
@@ -153,19 +362,44 @@ class AgentRuntime {
       ? onChainDailyLimit
       : this.defaultDailyLimit;
     const remainingWei = enforceableLimit > combinedSpent ? enforceableLimit - combinedSpent : 0n;
+    const testnetCapWei = BigInt(CHAIN_ID) === 1983n ? this.testModeLimit : this.defaultDailyLimit;
+    const constraints = [
+      { name: "enforceableLimit", value: enforceableLimit },
+      { name: "remainingWei", value: remainingWei },
+      { name: "qusdcBalance", value: qusdcBalance },
+      { name: "testModeLimit", value: testnetCapWei },
+      { name: "defaultDailyLimit", value: this.defaultDailyLimit }
+    ];
+    const spendLimit = spendLimitFromConstraints(constraints, ["qusdcBalance", "enforceableLimit", "remainingWei"]);
+    const safeSpendLimitWei = spendLimit.safeSpendLimitWei;
+    const budgetDebug = {
+      defaultDailyLimit: this.defaultDailyLimit.toString(),
+      testModeLimit: testnetCapWei.toString(),
+      onChainDailyLimit: onChainDailyLimit.toString(),
+      onChainSpentToday: onChainSpent.toString(),
+      localSpentToday: localSpent.toString(),
+      ledgerSpentToday: ledgerSpent.toString(),
+      enforceableLimit: enforceableLimit.toString(),
+      remainingWei: remainingWei.toString(),
+      qusdcBalance: qusdcBalance.toString(),
+      safeSpendLimitWei: safeSpendLimitWei.toString(),
+      limitingConstraint: spendLimit.limitingConstraint,
+      ignoredZeroConstraints: spendLimit.ignoredZeroConstraints,
+      constraints: Object.fromEntries(constraints.map((constraint) => [constraint.name, constraint.value.toString()])),
+      paused: Boolean(budget.paused)
+    };
+
+    ledger?.append?.({
+      eventType: "agent_budget_context",
+      status: safeSpendLimitWei > 0n ? "ok" : "blocked",
+      ...budgetDebug
+    });
 
     return {
-      budget: {
-        defaultDailyLimit: this.defaultDailyLimit.toString(),
-        onChainDailyLimit: onChainDailyLimit.toString(),
-        onChainSpentToday: onChainSpent.toString(),
-        localSpentToday: localSpent.toString(),
-        ledgerSpentToday: ledgerSpent.toString(),
-        enforceableLimit: enforceableLimit.toString(),
-        remainingWei: remainingWei.toString(),
-        paused: Boolean(budget.paused)
-      },
+      budget: budgetDebug,
       budgetRemainingQie: Number(ethers.formatUnits(remainingWei, 18)),
+      safeSpendLimitWei,
+      safeSpendLimitQie: weiToQieNumber(safeSpendLimitWei),
       recentHistory: this.getHistory(10).map((item) => ({
         timestamp: item.timestamp,
         task: item.task,
@@ -278,23 +512,45 @@ class AgentRuntime {
 
   async _assertOnChainLimit(runtime, agentId, amountWei) {
     const { contracts } = runtime;
-    const [budget, allowed] = await Promise.all([
+    const [budget, allowed, whitelisted] = await Promise.all([
       contracts.controller.getBudget(agentId),
-      contracts.controller.canSpendFor(agentId, contracts.addresses.vault, amountWei)
+      contracts.controller.canSpendFor(agentId, contracts.addresses.vault, amountWei),
+      contracts.controller.isServiceWhitelisted(agentId, contracts.addresses.vault)
     ]);
+    const dailyLimit = BigInt(budget.dailyLimit || 0);
+    const spentToday = BigInt(budget.spentToday || 0);
+    const checks = {
+      paused: Boolean(budget.paused),
+      dailyLimitExceeded: dailyLimit > 0n && spentToday + amountWei > dailyLimit,
+      notWhitelisted: !Boolean(whitelisted),
+      exceedsSafeSpendLimit: false
+    };
+    const rejection = {
+      reason: "SPEND_BLOCKED",
+      checks,
+      agentId: agentId.toString(),
+      vault: contracts.addresses.vault,
+      amountWei: amountWei.toString(),
+      dailyLimit: dailyLimit.toString(),
+      spentToday: spentToday.toString(),
+      vaultWhitelisted: Boolean(whitelisted)
+    };
 
-    if (budget.paused) {
-      throw new Error("SpendController budget is paused");
-    }
-    if (BigInt(budget.dailyLimit || 0) > 0n && BigInt(budget.spentToday || 0) + amountWei > BigInt(budget.dailyLimit)) {
-      throw new Error("on-chain SpendController daily limit would be exceeded");
-    }
-    if (!allowed) {
-      throw new Error("SpendController rejected the AI spending decision");
+    if (checks.paused || checks.dailyLimitExceeded || checks.notWhitelisted || !allowed) {
+      runtime.ledger?.append?.({
+        eventType: "spend_controller_precheck",
+        status: "blocked",
+        ...rejection
+      });
+      const error = new Error(JSON.stringify(rejection));
+      error.code = "SPEND_BLOCKED";
+      error.details = rejection;
+      throw error;
     }
   }
 
   async _ensureQusdcForPayment(runtime, amountWei) {
+    this._ensureRuntimeQusdc(runtime);
     const { contracts, ledger, liquidityEngine } = runtime;
     const owner = await contracts.signer.getAddress();
     const amount = BigInt(amountWei);
@@ -370,22 +626,62 @@ class AgentRuntime {
   }
 
   _assertBackendLimit(context, amountWei) {
+    const safeSpendLimit = BigInt(context.safeSpendLimitWei || 0);
     if (amountWei <= 0n) {
       throw new Error("AI spend amount must be greater than zero");
     }
-    if (amountWei > BigInt(context.budget.remainingWei)) {
-      throw new Error("AI spend amount exceeds backend remaining budget");
+    if (amountWei > safeSpendLimit) {
+      const checks = {
+        paused: Boolean(context.budget.paused),
+        dailyLimitExceeded: amountWei > BigInt(context.budget.remainingWei || 0),
+        notWhitelisted: false,
+        exceedsSafeSpendLimit: true
+      };
+      const error = new Error(JSON.stringify({
+        reason: "SPEND_BLOCKED",
+        checks,
+        amountWei: amountWei.toString(),
+        safeSpendLimitWei: safeSpendLimit.toString(),
+        limitingConstraint: context.budget.limitingConstraint
+      }));
+      error.code = "SPEND_BLOCKED";
+      throw error;
+    }
+    if (BigInt(context.budget.remainingWei || 0) > 0n && amountWei > BigInt(context.budget.remainingWei)) {
+      const error = new Error(JSON.stringify({
+        reason: "SPEND_BLOCKED",
+        checks: {
+          paused: Boolean(context.budget.paused),
+          dailyLimitExceeded: true,
+          notWhitelisted: false,
+          exceedsSafeSpendLimit: false
+        },
+        amountWei: amountWei.toString(),
+        remainingWei: context.budget.remainingWei
+      }));
+      error.code = "SPEND_BLOCKED";
+      throw error;
     }
     if (amountWei > this.defaultDailyLimit) {
-      throw new Error("AI spend amount exceeds DEFAULT_DAILY_LIMIT");
+      const error = new Error(JSON.stringify({
+        reason: "SPEND_BLOCKED",
+        checks: {
+          paused: Boolean(context.budget.paused),
+          dailyLimitExceeded: false,
+          notWhitelisted: false,
+          exceedsSafeSpendLimit: true
+        },
+        amountWei: amountWei.toString(),
+        defaultDailyLimit: this.defaultDailyLimit.toString()
+      }));
+      error.code = "SPEND_BLOCKED";
+      throw error;
     }
   }
 
   _parseDecision(content, budgetRemaining) {
-    let parsed;
-    try {
-      parsed = JSON.parse(content);
-    } catch (_error) {
+    const parsed = extractJsonObject(content);
+    if (!parsed) {
       throw new Error("AI decision was not valid strict JSON");
     }
 
@@ -403,9 +699,6 @@ class AgentRuntime {
     if (parsed.action === "spend" && amount <= 0) {
       throw new Error("AI spend decision must use amount greater than 0");
     }
-    if (amount > budgetRemaining) {
-      throw new Error("AI decision exceeds supplied budgetRemaining");
-    }
     if (typeof parsed.reasoning !== "string" || parsed.reasoning.trim().length === 0) {
       throw new Error("AI decision reasoning is required");
     }
@@ -414,6 +707,31 @@ class AgentRuntime {
       action: parsed.action,
       amount,
       reasoning: parsed.reasoning.trim()
+    };
+  }
+
+  _clampDecision(decision, safeSpendLimitWei) {
+    if (decision.action !== "spend") {
+      return decision;
+    }
+
+    const requestedWei = this._qieToWei(decision.amount);
+    const safeLimit = BigInt(safeSpendLimitWei || 0);
+    if (safeLimit <= 0n) {
+      return {
+        action: "hold",
+        amount: 0,
+        reasoning: `${decision.reasoning} Safe spend limit is 0, so execution was clamped to hold.`
+      };
+    }
+    if (requestedWei <= safeLimit) {
+      return decision;
+    }
+
+    return {
+      action: "spend",
+      amount: weiToQieNumber(safeLimit),
+      reasoning: `${decision.reasoning} Requested amount was clamped to safeSpendLimit before execution.`
     };
   }
 

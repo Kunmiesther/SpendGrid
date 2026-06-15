@@ -5,6 +5,48 @@ const { CHAIN_ID, NETWORK_NAME } = require("./deployment");
 const { bigintJson, createId, findEvent, hashPrompt, nowIso, toPositiveUint } = require("./utils");
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
+const DEFAULT_TEST_MODE_LIMIT_QIE = "1";
+
+function readPositiveBigInt(value, label) {
+  if (value === undefined || value === null || value === "") {
+    throw new Error(`${label} is required and must be greater than zero`);
+  }
+
+  const parsed = BigInt(value);
+  if (parsed <= 0n) {
+    throw new Error(`${label} must be greater than zero`);
+  }
+
+  return parsed;
+}
+
+function parseQieToWei(value, label) {
+  if (value === undefined || value === null || value === "") {
+    throw new Error(`${label} is required and must be greater than zero`);
+  }
+
+  const parsed = ethers.parseUnits(String(value), 18);
+  if (parsed <= 0n) {
+    throw new Error(`${label} must be greater than zero`);
+  }
+
+  return parsed;
+}
+
+function readTestModeLimitWei(options = {}) {
+  if (options.testModeLimitWei || process.env.TEST_MODE_LIMIT_WEI) {
+    return readPositiveBigInt(options.testModeLimitWei || process.env.TEST_MODE_LIMIT_WEI, "TEST_MODE_LIMIT_WEI");
+  }
+
+  return parseQieToWei(
+    options.testModeLimit || process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || DEFAULT_TEST_MODE_LIMIT_QIE,
+    "TEST_MODE_LIMIT"
+  );
+}
+
+function minimumConstraint(constraints) {
+  return constraints.reduce((current, next) => (next.value < current.value ? next : current));
+}
 
 class AutonomousAgentEngine {
   constructor(contracts, ledger, options = {}) {
@@ -12,14 +54,11 @@ class AutonomousAgentEngine {
     this.streamVault = makeStreamVaultAdapter(contracts.vault);
     this.ledger = ledger;
     this.liquidityEngine = options.liquidityEngine || null;
-    const configuredDailyLimit = options.defaultDailyLimit || process.env.DEFAULT_DAILY_LIMIT;
-    if (!configuredDailyLimit) {
-      throw new Error("DEFAULT_DAILY_LIMIT is required for autonomous spending safety");
-    }
-    this.defaultDailyLimit = BigInt(configuredDailyLimit);
-    if (this.defaultDailyLimit <= 0n) {
-      throw new Error("DEFAULT_DAILY_LIMIT must be greater than zero");
-    }
+    this.defaultDailyLimit = readPositiveBigInt(
+      options.defaultDailyLimit || process.env.DEFAULT_DAILY_LIMIT,
+      "DEFAULT_DAILY_LIMIT"
+    );
+    this.testModeLimit = readTestModeLimitWei(options);
     this.ready = false;
     this.queue = Promise.resolve();
   }
@@ -37,7 +76,8 @@ class AutonomousAgentEngine {
       network: NETWORK_NAME,
       signer: signerAddress,
       contracts: this.contracts.addresses,
-      defaultDailyLimit: this.defaultDailyLimit
+      defaultDailyLimit: this.defaultDailyLimit,
+      testModeLimit: this.testModeLimit
     });
   }
 
@@ -154,6 +194,8 @@ class AutonomousAgentEngine {
 
     if (decision.action === "createStream") {
       ratePerUnit = decision.ratePerUnit;
+      const safeCreateSpend = await this._capSpendAmount(agentId, ratePerUnit * decision.units);
+      decision.units = this._capUnitsForAmount(decision.units, ratePerUnit, safeCreateSpend);
       await this._assertSpendAllowed(agentId, null, ratePerUnit * decision.units);
 
       const created = await this._createStream({
@@ -172,6 +214,8 @@ class AutonomousAgentEngine {
 
     const stream = await this._loadStreamForAgent(streamId, agentId);
     ratePerUnit = ratePerUnit || BigInt(stream.ratePerUnit);
+    const safePaymentSpend = await this._capSpendAmount(agentId, ratePerUnit * decision.units);
+    decision.units = this._capUnitsForAmount(decision.units, ratePerUnit, safePaymentSpend);
     const amount = ratePerUnit * decision.units;
 
     if (decision.action !== "createStream") {
@@ -291,22 +335,113 @@ class AutonomousAgentEngine {
       }
     }
 
-    const [budget, canSpendFor] = await Promise.all([
+    const [budget, canSpendFor, vaultWhitelisted] = await Promise.all([
       this.contracts.controller.getBudget(agentId),
-      this.contracts.controller.canSpendFor(agentId, this.contracts.addresses.vault, amount)
+      this.contracts.controller.canSpendFor(agentId, this.contracts.addresses.vault, amount),
+      this.contracts.controller.isServiceWhitelisted(agentId, this.contracts.addresses.vault)
     ]);
+    const dailyLimit = BigInt(budget.dailyLimit || 0);
+    const spentToday = BigInt(budget.spentToday || 0);
+    const checks = {
+      paused: Boolean(budget.paused),
+      dailyLimitExceeded: dailyLimit === 0n || spentToday + amount > dailyLimit,
+      notWhitelisted: !Boolean(vaultWhitelisted),
+      exceedsSafeSpendLimit: false
+    };
 
-    if (budget.dailyLimit > 0n && budget.spentToday + amount > budget.dailyLimit) {
-      throw new Error("on-chain daily budget would be exceeded");
+    if (amount > this.defaultDailyLimit) {
+      checks.exceedsSafeSpendLimit = true;
     }
 
-    if (this.defaultDailyLimit > 0n && budget.spentToday + amount > this.defaultDailyLimit) {
-      throw new Error("DEFAULT_DAILY_LIMIT is lower than requested on-chain spend");
+    if (checks.paused || checks.dailyLimitExceeded || checks.notWhitelisted || checks.exceedsSafeSpendLimit || !canSpendFor) {
+      const reason = bigintJson({
+        reason: "SPEND_BLOCKED",
+        checks,
+        agentId,
+        streamId,
+        vault: this.contracts.addresses.vault,
+        amountWei: amount,
+        dailyLimit,
+        spentToday,
+        vaultWhitelisted
+      });
+      this.ledger.append({
+        eventType: "spend_controller_precheck",
+        status: "blocked",
+        ...reason
+      });
+      const error = new Error(JSON.stringify(reason));
+      error.code = "SPEND_BLOCKED";
+      error.details = reason;
+      throw error;
+    }
+  }
+
+  async _capSpendAmount(agentId, requestedAmount) {
+    const owner = await this.contracts.signer.getAddress();
+    const [budget, balance] = await Promise.all([
+      this.contracts.controller.getBudget(agentId),
+      this.contracts.qusdc.balanceOf(owner)
+    ]);
+    const onChainDailyLimit = BigInt(budget.dailyLimit || 0);
+    const spentToday = BigInt(budget.spentToday || 0);
+    const enforceableLimit = onChainDailyLimit > 0n && onChainDailyLimit < this.defaultDailyLimit
+      ? onChainDailyLimit
+      : this.defaultDailyLimit;
+    const onChainRemaining = enforceableLimit > spentToday ? enforceableLimit - spentToday : 0n;
+    const testnetCap = BigInt(CHAIN_ID) === 1983n ? this.testModeLimit : this.defaultDailyLimit;
+    const constraints = [
+      { name: "requestedAmount", value: BigInt(requestedAmount) },
+      { name: "defaultDailyLimit", value: this.defaultDailyLimit },
+      { name: "qusdcBalance", value: BigInt(balance) },
+      { name: "testModeLimit", value: testnetCap },
+      { name: "remainingWei", value: onChainRemaining }
+    ];
+    const limitingConstraint = minimumConstraint(constraints);
+    const capped = limitingConstraint.value;
+
+    this.ledger.append({
+      eventType: "agent_budget_context",
+      status: capped > 0n ? "ok" : "blocked",
+      agentId,
+      safeSpendLimitWei: capped,
+      limitingConstraint: limitingConstraint.name,
+      constraints: Object.fromEntries(constraints.map((constraint) => [constraint.name, constraint.value.toString()])),
+      enforceableLimit,
+      onChainDailyLimit,
+      spentToday
+    });
+
+    if (capped < BigInt(requestedAmount)) {
+      this.ledger.append({
+        eventType: "agent_spend_clamped",
+        status: capped > 0n ? "clamped" : "held",
+        agentId,
+        requestedAmount,
+        cappedAmount: capped,
+        defaultDailyLimit: this.defaultDailyLimit,
+        qusdcBalance: balance,
+        testModeLimit: testnetCap,
+        onChainRemaining,
+        limitingConstraint: limitingConstraint.name
+      });
     }
 
-    if (!canSpendFor) {
-      throw new Error("SpendController rejected the proposed payment");
+    return capped;
+  }
+
+  _capUnitsForAmount(requestedUnits, ratePerUnit, cappedAmount) {
+    const rate = BigInt(ratePerUnit);
+    if (rate <= 0n || BigInt(cappedAmount) <= 0n) {
+      throw new Error("safe spend cap is below the stream ratePerUnit");
     }
+
+    const cappedUnits = BigInt(cappedAmount) / rate;
+    if (cappedUnits <= 0n) {
+      throw new Error("safe spend cap is below the stream ratePerUnit");
+    }
+
+    return cappedUnits < BigInt(requestedUnits) ? cappedUnits : BigInt(requestedUnits);
   }
 
   async _ensureQusdcForPayment(amount) {

@@ -1,6 +1,9 @@
 const fs = require("fs");
 const path = require("path");
 const { ethers } = require("ethers");
+const { loadEnv } = require("./env");
+
+loadEnv();
 
 const CHAIN_ID = 1983;
 const NETWORK_NAME = "qie-testnet";
@@ -13,7 +16,6 @@ const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
 const QIEDEX_ROUTER_ADDRESS = "0x08cd2e72e156D8563B4351eb4065C262A9f553Ef";
 const QIEDEX_FACTORY_ADDRESS = "0x8E23128a5511223bE6c0d64106e2D4508C08398C";
 const WQIE_ADDRESS = "0x0087904D95BEe9E5F24dc8852804b547981A9139";
-const QUSDC_ADDRESS = "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5";
 
 function normalizeDeploymentAddress(label, value) {
   if (!value || !ethers.isAddress(value) || value.toLowerCase() === ZERO_ADDRESS) {
@@ -21,6 +23,17 @@ function normalizeDeploymentAddress(label, value) {
   }
 
   return ethers.getAddress(value);
+}
+
+function resolveQusdcAddress(deployment) {
+  const canonical = process.env.QUSDC_ADDRESS
+    || deployment.addresses?.qusdc
+    || deployment.qieStablecoin
+    || deployment.stable
+    || deployment.qusdc
+    || deployment.addresses?.mockQIEStable;
+
+  return canonical;
 }
 
 function loadDeployment() {
@@ -54,7 +67,7 @@ function loadDeployment() {
       ),
       qusdc: normalizeDeploymentAddress(
         "QUSDC",
-        process.env.QUSDC_ADDRESS || deployment.addresses?.qusdc || deployment.qusdc || QUSDC_ADDRESS
+        resolveQusdcAddress(deployment)
       ),
       agentRegistry: normalizeDeploymentAddress(
         "AgentRegistry",
