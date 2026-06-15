@@ -236,8 +236,26 @@ async function callHasLiquidity(liquidityEngine, state) {
 
   const addresses = getTokenAddresses(state);
   try {
+    if (typeof liquidityEngine.inspectLiquidity === "function") {
+      const liquidity = await liquidityEngine.inspectLiquidity(addresses.wqie, addresses.qusdc);
+      return {
+        ok: true,
+        hasLiquidity: Boolean(liquidity.hasLiquidity),
+        reason: liquidity.reason || null,
+        pair: liquidity.pair || null,
+        diagnostic: liquidity.diagnostic || null
+      };
+    }
+
     const hasLiquidity = await liquidityEngine.hasLiquidity(addresses.wqie, addresses.qusdc);
-    return { ok: true, hasLiquidity: Boolean(hasLiquidity) };
+    const diagnostic = typeof liquidityEngine.getLastDiagnostic === "function" ? liquidityEngine.getLastDiagnostic() : null;
+    return {
+      ok: true,
+      hasLiquidity: Boolean(hasLiquidity),
+      reason: diagnostic?.reason || null,
+      pair: diagnostic?.pair || null,
+      diagnostic
+    };
   } catch (error) {
     return { ok: false, hasLiquidity: false, reason: errorMessage(error) };
   }
@@ -397,11 +415,13 @@ async function runAgentCycle(state = {}) {
           result: swap.result || null
         });
       } else {
-        warnings.push("NO_LIQUIDITY");
+        warnings.push(liquidity.reason || "NO_LIQUIDITY");
         appendLog(state, {
           eventType: "agent_cycle_liquidity",
           status: "skipped",
-          reason: "NO_LIQUIDITY"
+          reason: liquidity.reason || "NO_LIQUIDITY",
+          pair: liquidity.pair || null,
+          diagnostic: liquidity.diagnostic || null
         });
       }
     }
@@ -417,11 +437,13 @@ async function runAgentCycle(state = {}) {
           reason: liquidity.reason
         });
       } else if (!liquidity.hasLiquidity) {
-        warnings.push("NO_LIQUIDITY");
+        warnings.push(liquidity.reason || "NO_LIQUIDITY");
         appendLog(state, {
           eventType: "agent_cycle_liquidity",
           status: "skipped",
-          reason: "NO_LIQUIDITY"
+          reason: liquidity.reason || "NO_LIQUIDITY",
+          pair: liquidity.pair || null,
+          diagnostic: liquidity.diagnostic || null
         });
       } else {
         appendLog(state, {

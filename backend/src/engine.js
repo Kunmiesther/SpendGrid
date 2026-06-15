@@ -476,8 +476,16 @@ class AutonomousAgentEngine {
       return { sufficient: false, reason: "LIQUIDITY_ENGINE_UNAVAILABLE", balance: balance.toString() };
     }
 
-    const pair = await this.liquidityEngine.checkPairExists(this.contracts.addresses.wqie, this.contracts.addresses.qusdc);
-    if (!pair || pair.toLowerCase?.() === ZERO_ADDRESS) {
+    const liquidity = typeof this.liquidityEngine.inspectLiquidity === "function"
+      ? await this.liquidityEngine.inspectLiquidity(this.contracts.addresses.wqie, this.contracts.addresses.qusdc)
+      : {
+          hasLiquidity: Boolean(await this.liquidityEngine.checkPairExists(this.contracts.addresses.wqie, this.contracts.addresses.qusdc)),
+          pair: await this.liquidityEngine.checkPairExists(this.contracts.addresses.wqie, this.contracts.addresses.qusdc),
+          reason: null
+        };
+
+    if (!liquidity.hasLiquidity || !liquidity.pair || liquidity.pair.toLowerCase?.() === ZERO_ADDRESS) {
+      const reason = liquidity.reason || "NO_LIQUIDITY_SKIP_SWAP";
       this.ledger.append({
         eventType: "qiedex_swap",
         inputToken: this.contracts.addresses.wqie,
@@ -485,10 +493,12 @@ class AutonomousAgentEngine {
         amountIn: requiredAmount,
         txHash: null,
         status: "skipped",
-        reason: "NO_LIQUIDITY_SKIP_SWAP",
+        reason,
+        pair: liquidity.pair || null,
+        diagnostic: liquidity.diagnostic || null,
         recipient: owner
       });
-      return { sufficient: false, reason: "NO_LIQUIDITY_SKIP_SWAP", balance: balance.toString() };
+      return { sufficient: false, reason, balance: balance.toString(), liquidity };
     }
 
     const swap = await this.liquidityEngine.ensureQusdcBalance({

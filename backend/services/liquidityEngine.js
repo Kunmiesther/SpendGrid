@@ -11,9 +11,27 @@ const FACTORY_ABI = [
   "function getPair(address tokenA,address tokenB) external view returns (address pair)"
 ];
 
+const PAIR_ABI = [
+  "function getReserves() external view returns (uint112 reserve0,uint112 reserve1,uint32 blockTimestampLast)",
+  "function token0() external view returns (address)",
+  "function token1() external view returns (address)"
+];
+
 const ROUTER_ABI = [
   "function swapExactTokensForTokens(uint256 amountIn,uint256 amountOutMin,address[] calldata path,address to,uint256 deadline) external returns (uint256[] memory amounts)"
 ];
+
+const REASONS = {
+  FACTORY_MISSING: "QIEDEX_FACTORY_CONTRACT_MISSING",
+  ROUTER_MISSING: "QIEDEX_ROUTER_CONTRACT_MISSING",
+  TOKEN_MISSING: "QIEDEX_TOKEN_CONTRACT_MISSING",
+  PAIR_MISSING: "QIEDEX_PAIR_MISSING",
+  PAIR_CONTRACT_MISSING: "QIEDEX_PAIR_CONTRACT_MISSING",
+  PAIR_EMPTY: "QIEDEX_PAIR_NO_RESERVES",
+  GET_PAIR_FAILED: "QIEDEX_GET_PAIR_CALL_FAILED",
+  CODE_CHECK_FAILED: "QIEDEX_CONTRACT_CODE_CHECK_FAILED",
+  RESERVE_CHECK_FAILED: "QIEDEX_PAIR_RESERVE_CHECK_FAILED"
+};
 
 function normalizeAddress(label, value) {
   if (!value || !ethers.isAddress(value) || value.toLowerCase() === ZERO_ADDRESS) {
@@ -52,6 +70,20 @@ function logFailure(eventType, error, fields = {}) {
   return record;
 }
 
+function logDiagnostic(eventType, fields = {}) {
+  const record = {
+    eventType,
+    ...fields
+  };
+
+  console.warn(JSON.stringify(record));
+  return record;
+}
+
+function providerFromContract(contract) {
+  return contract?.runner?.provider || contract?.provider || null;
+}
+
 async function contractAddress(contract) {
   if (!contract) {
     throw new Error("contract is required");
@@ -67,6 +99,36 @@ async function contractAddress(contract) {
   }
 
   throw new Error("contract address is unavailable");
+}
+
+async function verifyContractCode(provider, label, address, reason, fields = {}) {
+  if (!provider || typeof provider.getCode !== "function") {
+    return { ok: true, checked: false, reason: null };
+  }
+
+  try {
+    const code = await provider.getCode(address);
+    if (code && code !== "0x") {
+      return { ok: true, checked: true, reason: null };
+    }
+
+    const diagnostic = logDiagnostic("qiedex_contract_missing", {
+      status: "failed",
+      reason,
+      label,
+      address,
+      ...fields
+    });
+    return { ok: false, checked: true, reason, diagnostic };
+  } catch (error) {
+    const diagnostic = logFailure("qiedex_contract_code_check_failed", error, {
+      reason: REASONS.CODE_CHECK_FAILED,
+      label,
+      address,
+      ...fields
+    });
+    return { ok: false, checked: true, reason: REASONS.CODE_CHECK_FAILED, diagnostic };
+  }
 }
 
 function safeReceipt(receipt) {
@@ -97,45 +159,148 @@ function makeSwapLog(fields) {
 }
 
 async function getPair(factory, tokenA, tokenB) {
+  const result = await inspectPair(factory, tokenA, tokenB);
+  return result.pair;
+}
+
+async function inspectPair(factory, tokenA, tokenB) {
   const normalizedTokenA = normalizeAddressSafe("tokenA", tokenA);
   const normalizedTokenB = normalizeAddressSafe("tokenB", tokenB);
   if (!factory || !normalizedTokenA || !normalizedTokenB) {
-    return null;
+    return { pair: null, reason: "QIEDEX_INVALID_PAIR_INPUT" };
+  }
+
+  const provider = providerFromContract(factory);
+  const factoryAddress = normalizeAddressSafe("QIEDEX Factory", await contractAddress(factory));
+  if (!factoryAddress) {
+    return { pair: null, reason: "QIEDEX_FACTORY_ADDRESS_INVALID" };
+  }
+
+  const factoryCode = await verifyContractCode(provider, "QIEDEX Factory", factoryAddress, REASONS.FACTORY_MISSING, {
+    tokenA: normalizedTokenA,
+    tokenB: normalizedTokenB
+  });
+  if (!factoryCode.ok) {
+    return { pair: null, reason: factoryCode.reason, diagnostic: factoryCode.diagnostic };
+  }
+
+  const tokenACode = await verifyContractCode(provider, "input token", normalizedTokenA, REASONS.TOKEN_MISSING, {
+    tokenRole: "tokenA",
+    tokenA: normalizedTokenA,
+    tokenB: normalizedTokenB
+  });
+  if (!tokenACode.ok) {
+    return { pair: null, reason: tokenACode.reason, diagnostic: tokenACode.diagnostic };
+  }
+
+  const tokenBCode = await verifyContractCode(provider, "output token", normalizedTokenB, REASONS.TOKEN_MISSING, {
+    tokenRole: "tokenB",
+    tokenA: normalizedTokenA,
+    tokenB: normalizedTokenB
+  });
+  if (!tokenBCode.ok) {
+    return { pair: null, reason: tokenBCode.reason, diagnostic: tokenBCode.diagnostic };
   }
 
   try {
     const pair = await factory.getPair(normalizedTokenA, normalizedTokenB);
     if (!pair || pair.toLowerCase() === ZERO_ADDRESS) {
-      return null;
+      const diagnostic = logDiagnostic("qiedex_pair_missing", {
+        status: "skipped",
+        reason: REASONS.PAIR_MISSING,
+        factory: factoryAddress,
+        tokenA: normalizedTokenA,
+        tokenB: normalizedTokenB
+      });
+      return { pair: null, reason: REASONS.PAIR_MISSING, diagnostic };
     }
 
-    return ethers.getAddress(pair);
+    return { pair: ethers.getAddress(pair), reason: null, factory: factoryAddress };
   } catch (error) {
-    logFailure("qiedex_get_pair_failed", error, {
+    const diagnostic = logFailure("qiedex_get_pair_failed", error, {
+      reason: REASONS.GET_PAIR_FAILED,
+      factory: factoryAddress,
       tokenA: normalizedTokenA,
       tokenB: normalizedTokenB
     });
-    return null;
+    return { pair: null, reason: REASONS.GET_PAIR_FAILED, diagnostic };
   }
 }
 
 async function hasLiquidity(factory, tokenA, tokenB) {
-  const pair = await getPair(factory, tokenA, tokenB);
-  if (!pair) {
-    return false;
+  const result = await inspectLiquidity(factory, tokenA, tokenB);
+  return result.hasLiquidity;
+}
+
+async function inspectLiquidity(factory, tokenA, tokenB) {
+  const pairResult = await inspectPair(factory, tokenA, tokenB);
+  if (!pairResult.pair) {
+    return { hasLiquidity: false, pair: null, reason: pairResult.reason, diagnostic: pairResult.diagnostic };
   }
 
+  const pair = pairResult.pair;
   const provider = factory?.runner?.provider || factory?.provider;
   if (!provider || typeof provider.getCode !== "function") {
-    return true;
+    return { hasLiquidity: true, pair, reason: null };
   }
 
   try {
     const code = await provider.getCode(pair);
-    return Boolean(code && code !== "0x");
+    if (!code || code === "0x") {
+      const diagnostic = logDiagnostic("qiedex_pair_contract_missing", {
+        status: "failed",
+        reason: REASONS.PAIR_CONTRACT_MISSING,
+        pair,
+        tokenA,
+        tokenB
+      });
+      return { hasLiquidity: false, pair, reason: REASONS.PAIR_CONTRACT_MISSING, diagnostic };
+    }
   } catch (error) {
-    logFailure("qiedex_pair_validation_failed", error, { pair, tokenA, tokenB });
-    return false;
+    const diagnostic = logFailure("qiedex_pair_validation_failed", error, {
+      reason: REASONS.CODE_CHECK_FAILED,
+      pair,
+      tokenA,
+      tokenB
+    });
+    return { hasLiquidity: false, pair, reason: REASONS.CODE_CHECK_FAILED, diagnostic };
+  }
+
+  try {
+    const pairContract = new ethers.Contract(pair, PAIR_ABI, provider);
+    const reserves = await pairContract.getReserves();
+    const reserve0 = BigInt(reserves.reserve0 ?? reserves[0]);
+    const reserve1 = BigInt(reserves.reserve1 ?? reserves[1]);
+    if (reserve0 === 0n || reserve1 === 0n) {
+      const diagnostic = logDiagnostic("qiedex_pair_no_reserves", {
+        status: "skipped",
+        reason: REASONS.PAIR_EMPTY,
+        pair,
+        tokenA,
+        tokenB,
+        reserve0: reserve0.toString(),
+        reserve1: reserve1.toString()
+      });
+      return { hasLiquidity: false, pair, reason: REASONS.PAIR_EMPTY, diagnostic };
+    }
+
+    return {
+      hasLiquidity: true,
+      pair,
+      reason: null,
+      reserves: {
+        reserve0: reserve0.toString(),
+        reserve1: reserve1.toString()
+      }
+    };
+  } catch (error) {
+    const diagnostic = logFailure("qiedex_pair_reserve_check_failed", error, {
+      reason: REASONS.RESERVE_CHECK_FAILED,
+      pair,
+      tokenA,
+      tokenB
+    });
+    return { hasLiquidity: false, pair, reason: REASONS.RESERVE_CHECK_FAILED, diagnostic };
   }
 }
 
@@ -253,36 +418,76 @@ class LiquidityEngine {
     this.wqie = normalizeAddress("WQIE", options.wqie);
     this.qusdc = normalizeAddress("QUSDC", options.qusdc);
     this.ledger = options.ledger || null;
+    this.lastLiquidityDiagnostic = null;
 
     if (!this.factory) throw new Error("LiquidityEngine requires factory");
     if (!this.router) throw new Error("LiquidityEngine requires router");
   }
 
   async checkPairExists(tokenA = this.wqie, tokenB = this.qusdc) {
-    return getPair(this.factory, tokenA, tokenB);
+    const result = await inspectPair(this.factory, tokenA, tokenB);
+    this.lastLiquidityDiagnostic = result.reason ? result : null;
+    return result.pair;
   }
 
   async hasLiquidity(tokenA = this.wqie, tokenB = this.qusdc) {
-    return hasLiquidity(this.factory, tokenA, tokenB);
+    const result = await inspectLiquidity(this.factory, tokenA, tokenB);
+    this.lastLiquidityDiagnostic = result.reason ? result : null;
+    return result.hasLiquidity;
+  }
+
+  async inspectLiquidity(tokenA = this.wqie, tokenB = this.qusdc) {
+    const result = await inspectLiquidity(this.factory, tokenA, tokenB);
+    this.lastLiquidityDiagnostic = result.reason ? result : null;
+    return result;
+  }
+
+  getLastDiagnostic() {
+    return this.lastLiquidityDiagnostic;
   }
 
   async ensureQusdcBalance({ tokenIn, tokenOut, inputTokenContract, owner, requiredAmount, amountIn }) {
     try {
       const inputToken = normalizeAddress("inputToken", tokenIn);
       const outputToken = normalizeAddress("outputToken", tokenOut);
-      const pair = await this.checkPairExists(inputToken, outputToken);
-
-      if (!pair) {
+      const routerAddress = normalizeAddress("router", await contractAddress(this.router));
+      const routerCode = await verifyContractCode(
+        providerFromContract(this.router),
+        "QIEDEX Router",
+        routerAddress,
+        REASONS.ROUTER_MISSING,
+        { inputToken, outputToken }
+      );
+      if (!routerCode.ok) {
+        this.lastLiquidityDiagnostic = routerCode;
         const log = makeSwapLog({
           inputToken,
           outputToken,
           amountIn,
           status: "skipped",
-          reason: "NO_LIQUIDITY_SKIP_SWAP",
+          reason: routerCode.reason,
           recipient: owner
         });
-        this.ledger?.append?.(log);
-        return { swapped: false, reason: "NO_LIQUIDITY_SKIP_SWAP", pair: null, log };
+        this.ledger?.append?.({ ...log, requiredAmount: requiredAmount?.toString?.() || null });
+        return { swapped: false, reason: routerCode.reason, pair: null, log };
+      }
+
+      const liquidity = await this.inspectLiquidity(inputToken, outputToken);
+      const pair = liquidity.pair;
+
+      if (!liquidity.hasLiquidity) {
+        const reason = liquidity.reason || "NO_LIQUIDITY_SKIP_SWAP";
+        const log = makeSwapLog({
+          inputToken,
+          outputToken,
+          amountIn,
+          status: "skipped",
+          reason,
+          pair,
+          recipient: owner
+        });
+        this.ledger?.append?.({ ...log, requiredAmount: requiredAmount?.toString?.() || null });
+        return { swapped: false, reason, pair, log, diagnostic: liquidity };
       }
 
       const result = await swapTokens({
@@ -325,10 +530,14 @@ class LiquidityEngine {
 module.exports = {
   ERC20_ABI,
   FACTORY_ABI,
+  PAIR_ABI,
   ROUTER_ABI,
+  REASONS,
   LiquidityEngine,
   approveToken,
   getPair,
   hasLiquidity,
+  inspectLiquidity,
+  inspectPair,
   swapTokens
 };

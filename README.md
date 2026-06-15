@@ -71,3 +71,15 @@ daily limits, then sends the StreamVault transaction with `BACKEND_PRIVATE_KEY`.
 Every decision and transaction is logged in memory and appended to
 `backend/logs/agent-engine.ndjson` with structured fields for decision,
 transaction hash, gas used, and contract interaction type.
+
+## QIEDex Liquidity Requirement
+
+The backend can attempt a WQIE -> QUSDC swap only when `QIEDEX_ROUTER_ADDRESS`,
+`QIEDEX_FACTORY_ADDRESS`, `WQIE_ADDRESS`, and `QUSDC_ADDRESS` all resolve to
+deployed contracts on QIE Testnet and the factory has a funded WQIE/QUSDC pair.
+
+If the router, factory, token, pair, or pair reserves are missing, the runtime
+skips the swap and logs a specific QIEDex diagnostic. Autonomous spending still
+requires QUSDC, so fund the backend signer with QUSDC directly via faucet/mint,
+or deploy/create and fund the WQIE-QUSDC pool before relying on swap-based
+funding.

@@ -583,8 +583,16 @@ class AgentRuntime {
       return { sufficient: false, reason: "LIQUIDITY_ENGINE_UNAVAILABLE" };
     }
 
-    const pair = await liquidityEngine.checkPairExists(contracts.addresses.wqie, contracts.addresses.qusdc);
-    if (!pair || pair.toLowerCase?.() === ZERO_ADDRESS) {
+    const liquidity = typeof liquidityEngine.inspectLiquidity === "function"
+      ? await liquidityEngine.inspectLiquidity(contracts.addresses.wqie, contracts.addresses.qusdc)
+      : {
+          hasLiquidity: Boolean(await liquidityEngine.checkPairExists(contracts.addresses.wqie, contracts.addresses.qusdc)),
+          pair: await liquidityEngine.checkPairExists(contracts.addresses.wqie, contracts.addresses.qusdc),
+          reason: null
+        };
+
+    if (!liquidity.hasLiquidity || !liquidity.pair || liquidity.pair.toLowerCase?.() === ZERO_ADDRESS) {
+      const reason = liquidity.reason || "NO_LIQUIDITY_SKIP_SWAP";
       ledger?.append?.({
         eventType: "qiedex_swap",
         inputToken: contracts.addresses.wqie,
@@ -592,10 +600,12 @@ class AgentRuntime {
         amountIn: amount,
         txHash: null,
         status: "skipped",
-        reason: "NO_LIQUIDITY_SKIP_SWAP",
+        reason,
+        pair: liquidity.pair || null,
+        diagnostic: liquidity.diagnostic || null,
         recipient: owner
       });
-      return { sufficient: false, reason: "NO_LIQUIDITY_SKIP_SWAP" };
+      return { sufficient: false, reason, liquidity };
     }
 
     const swap = await liquidityEngine.ensureQusdcBalance({
