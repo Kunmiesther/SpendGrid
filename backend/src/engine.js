@@ -2,6 +2,7 @@ const { ethers } = require("ethers");
 const { decideAction, runModel } = require("./aiAgent");
 const { assertQieTestnet, makeStreamVaultAdapter } = require("./contracts");
 const { CHAIN_ID, NETWORK_NAME } = require("./deployment");
+const { isMockQusdcMode } = require("./qusdcMode");
 const { bigintJson, createId, findEvent, hashPrompt, nowIso, toPositiveUint } = require("./utils");
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
@@ -390,10 +391,13 @@ class AutonomousAgentEngine {
       : this.defaultDailyLimit;
     const onChainRemaining = enforceableLimit > spentToday ? enforceableLimit - spentToday : 0n;
     const testnetCap = BigInt(CHAIN_ID) === 1983n ? this.testModeLimit : this.defaultDailyLimit;
+    const balanceConstraint = isMockQusdcMode()
+      ? (BigInt(balance) >= BigInt(requestedAmount) ? BigInt(requestedAmount) : BigInt(balance))
+      : BigInt(balance);
     const constraints = [
       { name: "requestedAmount", value: BigInt(requestedAmount) },
       { name: "defaultDailyLimit", value: this.defaultDailyLimit },
-      { name: "qusdcBalance", value: BigInt(balance) },
+      { name: "qusdcBalance", value: balanceConstraint },
       { name: "testModeLimit", value: testnetCap },
       { name: "remainingWei", value: onChainRemaining }
     ];
@@ -421,6 +425,7 @@ class AutonomousAgentEngine {
         cappedAmount: capped,
         defaultDailyLimit: this.defaultDailyLimit,
         qusdcBalance: balance,
+        qusdcMode: isMockQusdcMode() ? "mock" : "default",
         testModeLimit: testnetCap,
         onChainRemaining,
         limitingConstraint: limitingConstraint.name
@@ -460,6 +465,16 @@ class AutonomousAgentEngine {
 
     if (balance >= requiredAmount) {
       return { sufficient: true, balance: balance.toString() };
+    }
+
+    if (isMockQusdcMode()) {
+      return {
+        sufficient: false,
+        reason: "INSUFFICIENT_MOCK_QUSDC",
+        balance: balance.toString(),
+        swap: null,
+        note: "mock mode: QIEDEX bypassed; fund signer with MockQUSDC faucet"
+      };
     }
 
     if (!this.liquidityEngine) {

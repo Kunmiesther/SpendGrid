@@ -1,6 +1,8 @@
 const { ethers } = require("ethers");
+const { MOCK_QUSDC_BYPASS_REASON, getMockQusdcAddress, isMockQusdcMode } = require("../src/qusdcMode");
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
+const MOCK_QUSDC_FAKE_BALANCE = ethers.MaxUint256.toString();
 
 const ERC20_ABI = [
   "function approve(address spender,uint256 amount) external returns (bool)",
@@ -39,6 +41,23 @@ function normalizeAddress(label, value) {
   }
 
   return ethers.getAddress(value);
+}
+
+function normalizeOptionalAddress(value) {
+  if (!value || !ethers.isAddress(value)) {
+    return ethers.ZeroAddress;
+  }
+
+  return ethers.getAddress(value);
+}
+
+function mockLiquidityResult() {
+  return {
+    hasLiquidity: true,
+    pair: null,
+    reason: MOCK_QUSDC_BYPASS_REASON,
+    bypassed: true
+  };
 }
 
 function normalizeAddressSafe(label, value) {
@@ -164,6 +183,10 @@ async function getPair(factory, tokenA, tokenB) {
 }
 
 async function inspectPair(factory, tokenA, tokenB) {
+  if (isMockQusdcMode()) {
+    return { pair: null, reason: MOCK_QUSDC_BYPASS_REASON, bypassed: true };
+  }
+
   const normalizedTokenA = normalizeAddressSafe("tokenA", tokenA);
   const normalizedTokenB = normalizeAddressSafe("tokenB", tokenB);
   if (!factory || !normalizedTokenA || !normalizedTokenB) {
@@ -228,11 +251,19 @@ async function inspectPair(factory, tokenA, tokenB) {
 }
 
 async function hasLiquidity(factory, tokenA, tokenB) {
+  if (isMockQusdcMode()) {
+    return true;
+  }
+
   const result = await inspectLiquidity(factory, tokenA, tokenB);
   return result.hasLiquidity;
 }
 
 async function inspectLiquidity(factory, tokenA, tokenB) {
+  if (isMockQusdcMode()) {
+    return mockLiquidityResult();
+  }
+
   const pairResult = await inspectPair(factory, tokenA, tokenB);
   if (!pairResult.pair) {
     return { hasLiquidity: false, pair: null, reason: pairResult.reason, diagnostic: pairResult.diagnostic };
@@ -346,6 +377,19 @@ function normalizeSwapArgs(routerOrOptions, signer, amountIn, amountOutMin, path
 async function swapTokens(routerOrOptions, signer, amountIn, amountOutMin, path) {
   const options = normalizeSwapArgs(routerOrOptions, signer, amountIn, amountOutMin, path);
 
+  if (isMockQusdcMode()) {
+    return {
+      ok: true,
+      txHash: null,
+      receipt: null,
+      status: "mock-bypassed",
+      reason: MOCK_QUSDC_BYPASS_REASON,
+      balance: MOCK_QUSDC_FAKE_BALANCE,
+      path: Array.isArray(options.path) ? options.path : null,
+      mocked: true
+    };
+  }
+
   try {
     const { router } = options;
     if (!router) {
@@ -413,30 +457,49 @@ async function swapTokens(routerOrOptions, signer, amountIn, amountOutMin, path)
 
 class LiquidityEngine {
   constructor(options = {}) {
+    this.mockMode = isMockQusdcMode();
     this.factory = options.factory;
     this.router = options.router;
-    this.wqie = normalizeAddress("WQIE", options.wqie);
-    this.qusdc = normalizeAddress("QUSDC", options.qusdc);
+    this.wqie = this.mockMode ? normalizeOptionalAddress(options.wqie) : normalizeAddress("WQIE", options.wqie);
+    this.qusdc = this.mockMode
+      ? normalizeOptionalAddress(options.qusdc || getMockQusdcAddress())
+      : normalizeAddress("QUSDC", options.qusdc);
     this.ledger = options.ledger || null;
     this.lastLiquidityDiagnostic = null;
 
-    if (!this.factory) throw new Error("LiquidityEngine requires factory");
-    if (!this.router) throw new Error("LiquidityEngine requires router");
+    if (!this.mockMode && !this.factory) throw new Error("LiquidityEngine requires factory");
+    if (!this.mockMode && !this.router) throw new Error("LiquidityEngine requires router");
   }
 
   async checkPairExists(tokenA = this.wqie, tokenB = this.qusdc) {
+    if (this.mockMode) {
+      this.lastLiquidityDiagnostic = { reason: MOCK_QUSDC_BYPASS_REASON, bypassed: true };
+      return null;
+    }
+
     const result = await inspectPair(this.factory, tokenA, tokenB);
     this.lastLiquidityDiagnostic = result.reason ? result : null;
     return result.pair;
   }
 
   async hasLiquidity(tokenA = this.wqie, tokenB = this.qusdc) {
+    if (this.mockMode) {
+      this.lastLiquidityDiagnostic = { reason: MOCK_QUSDC_BYPASS_REASON, bypassed: true };
+      return true;
+    }
+
     const result = await inspectLiquidity(this.factory, tokenA, tokenB);
     this.lastLiquidityDiagnostic = result.reason ? result : null;
     return result.hasLiquidity;
   }
 
   async inspectLiquidity(tokenA = this.wqie, tokenB = this.qusdc) {
+    if (this.mockMode) {
+      const result = mockLiquidityResult();
+      this.lastLiquidityDiagnostic = result;
+      return result;
+    }
+
     const result = await inspectLiquidity(this.factory, tokenA, tokenB);
     this.lastLiquidityDiagnostic = result.reason ? result : null;
     return result;
@@ -447,6 +510,17 @@ class LiquidityEngine {
   }
 
   async ensureQusdcBalance({ tokenIn, tokenOut, inputTokenContract, owner, requiredAmount, amountIn }) {
+    if (isMockQusdcMode()) {
+      return {
+        sufficient: true,
+        balance: MOCK_QUSDC_FAKE_BALANCE,
+        swap: null,
+        reason: MOCK_QUSDC_BYPASS_REASON,
+        mocked: true,
+        note: "mock mode bypass"
+      };
+    }
+
     try {
       const inputToken = normalizeAddress("inputToken", tokenIn);
       const outputToken = normalizeAddress("outputToken", tokenOut);

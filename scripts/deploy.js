@@ -7,6 +7,10 @@ const QIE_CHAIN_ID = 1983n;
 const DEPLOYMENT_NETWORK = "qie-testnet";
 const DEPLOYMENT_FILE = `deployments/${DEPLOYMENT_NETWORK}.json`;
 
+function isMockQusdcMode() {
+  return String(process.env.QUSDC_MODE || "").trim().toLowerCase() === "mock";
+}
+
 function assertAddress(label, value) {
   if (!ethers.isAddress(value)) {
     throw new Error(`${label} is not a valid EVM address: ${value}`);
@@ -101,10 +105,12 @@ async function main() {
   console.log(`Chain ID: ${chain.chainId.toString()}`);
   console.log(`Deployer: ${deployerAddress}`);
 
-  const stable = await deployContract("MockQIEStable");
+  const useMockQusdc = isMockQusdcMode();
+  const paymentTokenContract = useMockQusdc ? "MockQUSDC" : "MockQIEStable";
+  const stable = await deployContract(paymentTokenContract);
   const stableAddress = await stable.getAddress();
-  assertAddress("MockQIEStable", stableAddress);
-  console.log(`Mock Stablecoin deployed at: ${stableAddress}`);
+  assertAddress(paymentTokenContract, stableAddress);
+  console.log(`${paymentTokenContract} deployed at: ${stableAddress}`);
 
   const registry = await deployContract("AgentRegistry");
   const registryAddress = await registry.getAddress();
@@ -141,11 +147,15 @@ async function main() {
 
   const deployment = {
     stable: stableAddress,
+    qusdc: stableAddress,
+    mockQUSDC: useMockQusdc ? stableAddress : undefined,
     registry: registryAddress,
     controller: controllerAddress,
     vault: vaultAddress,
     addresses: {
-      mockQIEStable: stableAddress,
+      mockQIEStable: useMockQusdc ? undefined : stableAddress,
+      mockQUSDC: useMockQusdc ? stableAddress : undefined,
+      qusdc: stableAddress,
       agentRegistry: registryAddress,
       spendController: controllerAddress,
       streamVault: vaultAddress
@@ -163,13 +173,19 @@ async function main() {
 
   const deploymentPath = writeDeploymentFile(deployment);
   const frontendDeploymentPath = writeFrontendDeploymentFile(deployment);
-  const envPath = upsertEnvFile({
+  const envValues = {
     QIE_STABLECOIN_ADDRESS: stableAddress,
+    QUSDC_ADDRESS: stableAddress,
     AGENT_REGISTRY_ADDRESS: registryAddress,
     SPEND_CONTROLLER_ADDRESS: controllerAddress,
     STREAM_VAULT_ADDRESS: vaultAddress,
     DEPLOYMENT_PATH: DEPLOYMENT_FILE
-  });
+  };
+  if (useMockQusdc) {
+    envValues.QUSDC_MODE = "mock";
+    envValues.MOCK_QUSDC_ADDRESS = stableAddress;
+  }
+  const envPath = upsertEnvFile(envValues);
 
   console.log(`Deployment file written to: ${deploymentPath}`);
   if (frontendDeploymentPath) {

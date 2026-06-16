@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { ethers } = require("ethers");
 const { loadEnv } = require("./env");
+const { isMockQusdcMode } = require("./qusdcMode");
 
 loadEnv();
 
@@ -26,6 +27,17 @@ function normalizeDeploymentAddress(label, value) {
 }
 
 function resolveQusdcAddress(deployment) {
+  if (isMockQusdcMode()) {
+    return process.env.MOCK_QUSDC_ADDRESS
+      || deployment.addresses?.mockQUSDC
+      || deployment.addresses?.mockQusdc
+      || deployment.mockQUSDC
+      || deployment.mockQusdc
+      || process.env.QUSDC_ADDRESS
+      || deployment.addresses?.qusdc
+      || deployment.qusdc;
+  }
+
   const canonical = process.env.QUSDC_ADDRESS
     || deployment.addresses?.qusdc
     || deployment.qieStablecoin

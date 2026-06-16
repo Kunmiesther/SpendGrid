@@ -83,3 +83,54 @@ skips the swap and logs a specific QIEDex diagnostic. Autonomous spending still
 requires QUSDC, so fund the backend signer with QUSDC directly via faucet/mint,
 or deploy/create and fund the WQIE-QUSDC pool before relying on swap-based
 funding.
+
+## Mock QUSDC Dev Mode
+
+For deterministic dev/testnet simulation without a faucet, mint function, or DEX
+liquidity, run the protocol with `QUSDC_MODE=mock`. Mock mode bypasses QIEDex
+entirely; the backend only checks the ERC20 balance of the configured mock token.
+
+```bash
+QUSDC_MODE=mock npm run deploy:qie
+```
+
+The deploy script creates `MockQUSDC`, wires the new `StreamVault` to that token,
+and writes these values to `.env` and `deployments/qie-testnet.json`:
+
+```bash
+QUSDC_MODE=mock
+QUSDC_ADDRESS=0x...
+MOCK_QUSDC_ADDRESS=0x...
+```
+
+Bootstrap the dev agent and vault whitelist, then fund and approve the runtime
+signer:
+
+```bash
+npx hardhat run scripts/bootstrapSpendGrid.js --network qieTestnet
+npx hardhat run scripts/fundSignerMockQUSDC.js --network qieTestnet
+```
+
+Run the backend and submit a spend:
+
+```bash
+npm run backend
+curl -X POST http://localhost:8080/run-task \
+  -H "Content-Type: application/json" \
+  -d "{\"agentId\":1,\"prompt\":\"pay mock dev receiver\",\"receiver\":\"0xRECEIVER\",\"ratePerUnit\":\"1000000000000000000\",\"units\":\"1\"}"
+```
+
+`fundSignerMockQUSDC.js` mints mock QUSDC to `MOCK_QUSDC_RECIPIENT`,
+`BACKEND_SIGNER_ADDRESS`, or the wallet derived from `BACKEND_PRIVATE_KEY`, then
+approves `StreamVault` unless `MOCK_QUSDC_APPROVE_VAULT=false`.
+
+You can deploy only the token with:
+
+```bash
+npx hardhat run scripts/deployMockQUSDC.js --network qieTestnet
+```
+
+For actual `StreamVault` transfers to succeed, the deployed `StreamVault` must
+use the same mock token as its payment token. If the current vault was deployed
+with a different token, redeploy the protocol with `QUSDC_MODE=mock`; the backend
+will fail fast instead of silently using the wrong token.

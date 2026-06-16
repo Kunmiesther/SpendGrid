@@ -1,4 +1,5 @@
 const aiSentry = require("../services/aiSentry");
+const { MOCK_QUSDC_BYPASS_REASON, isMockQusdcMode } = require("../src/qusdcMode");
 
 const RECOMMENDATIONS = new Set(["HOLD", "SWAP_PREPARATION", "REDUCE_SPEND"]);
 
@@ -230,6 +231,10 @@ async function waitForReceipt(tx) {
 }
 
 async function callHasLiquidity(liquidityEngine, state) {
+  if (isMockQusdcMode()) {
+    return { ok: true, hasLiquidity: false, reason: MOCK_QUSDC_BYPASS_REASON, bypassed: true };
+  }
+
   if (!liquidityEngine || typeof liquidityEngine.hasLiquidity !== "function") {
     return { ok: false, hasLiquidity: false, reason: "LIQUIDITY_ENGINE_UNAVAILABLE" };
   }
@@ -262,6 +267,10 @@ async function callHasLiquidity(liquidityEngine, state) {
 }
 
 async function executeSwap(liquidityEngine, state, requiredAmount) {
+  if (isMockQusdcMode()) {
+    return { executed: false, reason: MOCK_QUSDC_BYPASS_REASON, bypassed: true };
+  }
+
   if (!liquidityEngine) {
     return { executed: false, reason: "LIQUIDITY_ENGINE_UNAVAILABLE" };
   }
@@ -397,6 +406,12 @@ async function runAgentCycle(state = {}) {
           status: "warning",
           reason: liquidity.reason
         });
+      } else if (liquidity.bypassed) {
+        appendLog(state, {
+          eventType: "agent_cycle_liquidity",
+          status: "bypassed",
+          reason: liquidity.reason
+        });
       } else if (liquidity.hasLiquidity) {
         const swap = await executeSwap(liquidityEngine, state, requiredPaymentAmount);
         result.swapExecuted = swap.executed;
@@ -434,6 +449,12 @@ async function runAgentCycle(state = {}) {
         appendLog(state, {
           eventType: "agent_cycle_liquidity",
           status: "warning",
+          reason: liquidity.reason
+        });
+      } else if (liquidity.bypassed) {
+        appendLog(state, {
+          eventType: "agent_cycle_liquidity",
+          status: "bypassed",
           reason: liquidity.reason
         });
       } else if (!liquidity.hasLiquidity) {

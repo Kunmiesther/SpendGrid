@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const { ethers } = require("ethers");
 const { ERC20_ABI } = require("../src/contracts");
 const { CHAIN_ID } = require("../src/deployment");
+const { isMockQusdcMode } = require("../src/qusdcMode");
 const { LLMProvider } = require("./llmProvider");
 
 const WEI_PER_QIE = 10n ** 18n;
@@ -301,17 +302,36 @@ class AgentRuntime {
 
   _resolveQusdcAddress(runtime) {
     const { contracts } = runtime;
+    const candidateQusdc = isMockQusdcMode()
+      ? (
+          process.env.MOCK_QUSDC_ADDRESS
+          || contracts.deployment?.addresses?.mockQUSDC
+          || contracts.deployment?.addresses?.mockQusdc
+          || contracts.deployment?.mockQUSDC
+          || contracts.deployment?.mockQusdc
+          || process.env.QUSDC_ADDRESS
+          || contracts.deployment?.addresses?.qusdc
+          || contracts.deployment?.qusdc
+          || contracts.addresses?.qusdc
+        )
+      : (
+          process.env.QUSDC_ADDRESS
+          || contracts.deployment?.addresses?.qusdc
+          || contracts.deployment?.qieStablecoin
+          || contracts.deployment?.stable
+          || contracts.deployment?.qusdc
+          || contracts.addresses?.qusdc
+        );
     const configuredQusdc = normalizeAddress(
-      process.env.QUSDC_ADDRESS
-      || contracts.deployment?.addresses?.qusdc
-      || contracts.deployment?.qieStablecoin
-      || contracts.deployment?.stable
-      || contracts.deployment?.qusdc
-      || contracts.addresses?.qusdc
+      candidateQusdc
     );
 
     if (!configuredQusdc) {
-      throw new Error("QUSDC_ADDRESS is required or must be present in deployment config");
+      throw new Error(
+        isMockQusdcMode()
+          ? "QUSDC_MODE=mock requires MOCK_QUSDC_ADDRESS or a mockQUSDC address in the deployment config"
+          : "QUSDC_ADDRESS is required or must be present in deployment config"
+      );
     }
     if (sameAddress(configuredQusdc, contracts.addresses?.wqie)) {
       throw new Error(`QUSDC address resolves to WQIE address ${configuredQusdc}`);
@@ -567,6 +587,16 @@ class AgentRuntime {
 
     if (balance >= amount) {
       return { sufficient: true, balance: balance.toString() };
+    }
+
+    if (isMockQusdcMode()) {
+      return {
+        sufficient: false,
+        reason: "INSUFFICIENT_MOCK_QUSDC",
+        balance: balance.toString(),
+        swap: null,
+        note: "mock mode: QIEDEX bypassed; fund signer with MockQUSDC faucet"
+      };
     }
 
     if (!liquidityEngine) {

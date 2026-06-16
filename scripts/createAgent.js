@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const hre = require("hardhat");
 
 const CONTROLLER_ADDRESS = "0xDDe02252aebDdF65F4Ec373881F544107Bd62796";
@@ -30,6 +32,38 @@ function requireAddress(label, value) {
   }
 
   return hre.ethers.getAddress(value);
+}
+
+function deploymentPath() {
+  return path.join(__dirname, "..", process.env.DEPLOYMENT_PATH || "deployments/qie-testnet.json");
+}
+
+function loadDeployment() {
+  const filePath = deploymentPath();
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function deploymentAddress(deployment, ...keys) {
+  for (const key of keys) {
+    const value = deployment?.addresses?.[key] || deployment?.[key];
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function resolveControllerAddress(options = {}) {
+  const deployment = loadDeployment();
+  return options.controllerAddress
+    || process.env.SPEND_CONTROLLER_ADDRESS
+    || deploymentAddress(deployment, "spendController", "controller")
+    || CONTROLLER_ADDRESS;
 }
 
 function resolveAgentWallet(signerAddress) {
@@ -81,7 +115,7 @@ async function getAgentIfExists(registry, agentId) {
 }
 
 async function ensureAgent(options = {}) {
-  const controllerAddress = requireAddress("SpendController", options.controllerAddress || CONTROLLER_ADDRESS);
+  const controllerAddress = requireAddress("SpendController", resolveControllerAddress(options));
   const agentId = Number(options.agentId || AGENT_ID);
   const qiePassId = normalizeBytes32(options.qiePassId || process.env.BOOTSTRAP_QIE_PASS_ID || DEFAULT_QIE_PASS_ID);
   const [signer] = await hre.ethers.getSigners();

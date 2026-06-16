@@ -1,17 +1,37 @@
+const fs = require("fs");
+const path = require("path");
 const hre = require("hardhat");
 const { ensureAgent, getAgentIfExists } = require("./createAgent");
 
-const CONTROLLER_ADDRESS = "0xDDe02252aebDdF65F4Ec373881F544107Bd62796";
-const VAULT_ADDRESS = "0xe2337Ea67d24c98370c42F22C94496780D8503E0";
-const AGENT_ID = 1;
-const DAILY_LIMIT = "100000000000000000000";
+const AGENT_ID = Number(process.env.AGENT_ID || "1");
+const DAILY_LIMIT = process.env.DEFAULT_DAILY_LIMIT || "100000000000000000000";
 
 function sameAddress(left, right) {
   return left.toLowerCase() === right.toLowerCase();
 }
 
-function formatError(error) {
-  return error.shortMessage || error.reason || error.message || String(error);
+function deploymentPath() {
+  return path.join(__dirname, "..", process.env.DEPLOYMENT_PATH || "deployments/qie-testnet.json");
+}
+
+function loadDeployment() {
+  const filePath = deploymentPath();
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Missing deployment artifact at ${filePath}`);
+  }
+
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function deploymentAddress(deployment, ...keys) {
+  for (const key of keys) {
+    const value = deployment?.addresses?.[key] || deployment?.[key];
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
 }
 
 function resolveWriteMethod(contract, operationName, fallbackName) {
@@ -58,9 +78,16 @@ function requireAddress(label, value) {
 }
 
 async function main() {
-  const controllerAddress = requireAddress("SpendController", CONTROLLER_ADDRESS);
-  const vaultAddress = requireAddress("vault", VAULT_ADDRESS);
-  const controller = await hre.ethers.getContractAt("SpendController", CONTROLLER_ADDRESS);
+  const deployment = loadDeployment();
+  const controllerAddress = requireAddress(
+    "SpendController",
+    process.env.SPEND_CONTROLLER_ADDRESS || deploymentAddress(deployment, "spendController", "controller")
+  );
+  const vaultAddress = requireAddress(
+    "StreamVault",
+    process.env.STREAM_VAULT_ADDRESS || deploymentAddress(deployment, "streamVault", "vault")
+  );
+  const controller = await hre.ethers.getContractAt("SpendController", controllerAddress);
   const [signer] = await hre.ethers.getSigners();
 
   if (!signer) {
@@ -71,6 +98,11 @@ async function main() {
   const controllerCode = await hre.ethers.provider.getCode(controllerAddress);
   if (controllerCode === "0x") {
     throw new Error(`No contract code found at SpendController address ${controllerAddress}`);
+  }
+
+  const vaultCode = await hre.ethers.provider.getCode(vaultAddress);
+  if (vaultCode === "0x") {
+    throw new Error(`No contract code found at StreamVault address ${vaultAddress}`);
   }
 
   const registryAddress = await controller.registry();
@@ -113,34 +145,31 @@ async function main() {
     throw new Error(`Agent ${AGENT_ID} is not active in AgentRegistry ${registryAddress}`);
   }
 
-  try {
-    const whitelistTx = await setServiceWhitelisted(controller, AGENT_ID, vaultAddress, true);
-    await waitForSuccess(whitelistTx, "setServiceWhitelisted");
+  const whitelistTx = await setServiceWhitelisted(controller, AGENT_ID, vaultAddress, true);
+  await waitForSuccess(whitelistTx, "setServiceWhitelisted");
 
-    const whitelisted = await controller.isServiceWhitelisted(AGENT_ID, vaultAddress);
-    if (!whitelisted) {
-      throw new Error(`Vault ${vaultAddress} is still not whitelisted for agentId ${AGENT_ID}`);
-    }
-    console.log(`setServiceWhitelisted succeeded: vault ${vaultAddress} is whitelisted for agentId ${AGENT_ID}`);
-
-    const limitTx = await setDailyLimit(controller, AGENT_ID, DAILY_LIMIT);
-    await waitForSuccess(limitTx, "setDailyLimit");
-
-    const budget = await controller.getBudget(AGENT_ID);
-    const currentDailyLimit = budget.dailyLimit.toString();
-    if (currentDailyLimit !== DAILY_LIMIT) {
-      throw new Error(`Daily limit mismatch for agentId ${AGENT_ID}: expected ${DAILY_LIMIT}, got ${currentDailyLimit}`);
-    }
-    console.log(`setDailyLimit succeeded: dailyLimit for agentId ${AGENT_ID} is ${currentDailyLimit}`);
-
-    console.log("SpendGrid bootstrap complete");
-  } catch (error) {
-    console.error("SpendGrid bootstrap failed");
-    throw error;
+  const whitelisted = await controller.isServiceWhitelisted(AGENT_ID, vaultAddress);
+  if (!whitelisted) {
+    throw new Error(`Vault ${vaultAddress} is still not whitelisted for agentId ${AGENT_ID}`);
   }
+  console.log(`setServiceWhitelisted succeeded: vault ${vaultAddress} is whitelisted for agentId ${AGENT_ID}`);
+
+  const limitTx = await setDailyLimit(controller, AGENT_ID, DAILY_LIMIT);
+  await waitForSuccess(limitTx, "setDailyLimit");
+
+  const budget = await controller.getBudget(AGENT_ID);
+  const currentDailyLimit = budget.dailyLimit.toString();
+  if (currentDailyLimit !== DAILY_LIMIT) {
+    throw new Error(`Daily limit mismatch for agentId ${AGENT_ID}: expected ${DAILY_LIMIT}, got ${currentDailyLimit}`);
+  }
+  console.log(`setDailyLimit succeeded: dailyLimit for agentId ${AGENT_ID} is ${currentDailyLimit}`);
+
+  console.log("SpendGrid bootstrap complete");
 }
 
 main().catch((error) => {
+  console.error("SpendGrid bootstrap failed");
+  console.error(error.shortMessage || error.reason || error.message || String(error));
   console.error(error);
   process.exitCode = 1;
 });

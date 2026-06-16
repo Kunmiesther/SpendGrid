@@ -12,6 +12,7 @@ const { AutonomousAgentEngine } = require("./src/engine");
 const { makeContracts } = require("./src/contracts");
 const { AgentLedger } = require("./src/ledger");
 const { loadDeployment } = require("./src/deployment");
+const { isMockQusdcMode } = require("./src/qusdcMode");
 const { bigintJson, findEvent, normalizeBytes32, toPositiveUint, toUint } = require("./src/utils");
 
 function logStartupConfig() {
@@ -48,7 +49,9 @@ function logStartupConfig() {
     TEST_MODE_LIMIT: process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "1",
     parsedTestModeLimit,
     QIE_STABLECOIN_ADDRESS: process.env.QIE_STABLECOIN_ADDRESS || null,
+    QUSDC_MODE: process.env.QUSDC_MODE || null,
     QUSDC_ADDRESS: process.env.QUSDC_ADDRESS || null,
+    MOCK_QUSDC_ADDRESS: process.env.MOCK_QUSDC_ADDRESS || null,
     resolvedQusdc,
     resolvedQusdcSource
   }));
@@ -88,6 +91,18 @@ async function getBlockchainRuntime(runtime) {
     source: process.env.QUSDC_ADDRESS ? "env" : "deployment"
   });
   if (!tokenMatchesQusdc) {
+    if (isMockQusdcMode()) {
+      const reason = "QUSDC_MODE=mock requires StreamVault.qieStablecoin to match the configured mock QUSDC token";
+      ledger.append({
+        eventType: "qusdc_config",
+        status: "blocked",
+        runtimeQusdc: contracts.addresses.qusdc,
+        vaultToken,
+        reason
+      });
+      throw new Error(`${reason}. StreamVault token: ${vaultToken}; configured QUSDC: ${contracts.addresses.qusdc}. Redeploy the protocol with QUSDC_MODE=mock or point MOCK_QUSDC_ADDRESS at the vault token.`);
+    }
+
     ledger.append({
       eventType: "qusdc_config_warning",
       status: "warning",
@@ -97,20 +112,28 @@ async function getBlockchainRuntime(runtime) {
     });
   }
   let liquidityEngine = null;
-  try {
-    liquidityEngine = new LiquidityEngine({
-      factory: contracts.qiedexFactory,
-      router: contracts.qiedexRouter,
-      wqie: contracts.addresses.wqie,
-      qusdc: contracts.addresses.qusdc,
-      ledger
-    });
-  } catch (error) {
+  if (isMockQusdcMode()) {
     ledger.append({
       eventType: "qiedex_liquidity_engine",
       status: "disabled",
-      reason: error.shortMessage || error.message
+      reason: "QUSDC_MODE_MOCK_BYPASS"
     });
+  } else {
+    try {
+      liquidityEngine = new LiquidityEngine({
+        factory: contracts.qiedexFactory,
+        router: contracts.qiedexRouter,
+        wqie: contracts.addresses.wqie,
+        qusdc: contracts.addresses.qusdc,
+        ledger
+      });
+    } catch (error) {
+      ledger.append({
+        eventType: "qiedex_liquidity_engine",
+        status: "disabled",
+        reason: error.shortMessage || error.message
+      });
+    }
   }
   const engine = new AutonomousAgentEngine(contracts, ledger, { liquidityEngine });
   await engine.start();
