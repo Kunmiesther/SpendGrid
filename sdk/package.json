@@ -1,0 +1,31 @@
+{
+  "name": "@spendgrid/sdk",
+  "version": "0.1.0",
+  "description": "Framework-agnostic SDK for SpendGrid payments on QIE testnet.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./pay": "./pay.js",
+    "./vault": "./vault.js",
+    "./payButton": "./payButton.js",
+    "./killSwitch": "./killSwitch.js",
+    "./adapter": "./adapter.js",
+    "./quick": "./quick.js",
+    "./cache": "./cache.js"
+  },
+  "files": [
+    "*.js",
+    "*.d.ts",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "peerDependencies": {
+    "ethers": "^6.13.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
