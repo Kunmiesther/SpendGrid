@@ -14,10 +14,6 @@ const DEPLOYMENT_FILE = path.join(PROJECT_ROOT, "deployments", "qie-testnet.json
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
 
-const QIEDEX_ROUTER_ADDRESS = "0x08cd2e72e156D8563B4351eb4065C262A9f553Ef";
-const QIEDEX_FACTORY_ADDRESS = "0x8E23128a5511223bE6c0d64106e2D4508C08398C";
-const WQIE_ADDRESS = "0x0087904D95BEe9E5F24dc8852804b547981A9139";
-
 function normalizeDeploymentAddress(label, value) {
   if (!value || !ethers.isAddress(value) || value.toLowerCase() === ZERO_ADDRESS) {
     throw new Error(`${label} is missing or invalid in ${DEPLOYMENT_PUBLIC_PATH}`);
@@ -67,15 +63,15 @@ function loadDeployment() {
     addresses: {
       qiedexRouter: normalizeDeploymentAddress(
         "QIEDEX Router",
-        process.env.QIEDEX_ROUTER_ADDRESS || deployment.addresses?.qiedexRouter || deployment.qiedexRouter || QIEDEX_ROUTER_ADDRESS
+        process.env.QIEDEX_ROUTER_ADDRESS || deployment.addresses?.qiedexRouter || deployment.qiedexRouter
       ),
       qiedexFactory: normalizeDeploymentAddress(
         "QIEDEX Factory",
-        process.env.QIEDEX_FACTORY_ADDRESS || deployment.addresses?.qiedexFactory || deployment.qiedexFactory || QIEDEX_FACTORY_ADDRESS
+        process.env.QIEDEX_FACTORY_ADDRESS || deployment.addresses?.qiedexFactory || deployment.qiedexFactory
       ),
       wqie: normalizeDeploymentAddress(
         "WQIE",
-        process.env.WQIE_ADDRESS || deployment.addresses?.wqie || deployment.wqie || WQIE_ADDRESS
+        process.env.WQIE_ADDRESS || deployment.addresses?.wqie || deployment.wqie
       ),
       qusdc: normalizeDeploymentAddress(
         "QUSDC",

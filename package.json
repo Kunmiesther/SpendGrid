@@ -7,6 +7,7 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "deploy:qie": "hardhat run scripts/deploy.js --network qieTestnet",
+    "deploy:qiedex": "hardhat run scripts/deployQiedex.js --network qieTestnet",
     "backend": "node backend/server.js"
   },
   "dependencies": {
