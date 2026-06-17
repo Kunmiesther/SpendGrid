@@ -6,7 +6,7 @@ const { isMockQusdcMode } = require("./qusdcMode");
 const { bigintJson, createId, findEvent, hashPrompt, nowIso, toPositiveUint } = require("./utils");
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
-const DEFAULT_TEST_MODE_LIMIT_QIE = "1";
+const DEFAULT_TEST_MODE_LIMIT_QIE = "0.05";
 
 function readPositiveBigInt(value, label) {
   if (value === undefined || value === null || value === "") {

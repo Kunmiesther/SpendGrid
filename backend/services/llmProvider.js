@@ -64,7 +64,7 @@ class LLMProvider {
       "Decide whether the task deserves an on-chain spend or whether funds should be held.",
       "Return STRICT JSON ONLY. Do not wrap in markdown. Do not include prose outside JSON.",
       'Schema: {"action":"spend"|"hold","amount":number,"reasoning":"string"}',
-      "The amount is denominated in whole QIE token units, not wei/base units.",
+      "The amount is denominated in QIE token units, not wei/base units. Decimal amounts below 1 are valid.",
       "Never choose an amount greater than budgetRemaining or safeSpendLimit.",
       "Choose hold with amount 0 when value is unclear, budget is insufficient, or history suggests risk."
     ].join(" ");

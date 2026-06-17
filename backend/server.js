@@ -26,10 +26,12 @@ function logStartupConfig() {
     parsedDefaultDailyLimit = "INVALID";
   }
   try {
-    parsedTestModeLimit = ethers.parseUnits(
-      String(process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "1"),
-      18
-    ).toString();
+    parsedTestModeLimit = process.env.TEST_MODE_LIMIT_WEI
+      ? BigInt(process.env.TEST_MODE_LIMIT_WEI).toString()
+      : ethers.parseUnits(
+        String(process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "0.05"),
+        18
+      ).toString();
   } catch (_error) {
     parsedTestModeLimit = "INVALID";
   }
@@ -46,7 +48,8 @@ function logStartupConfig() {
     eventType: "startup_config",
     DEFAULT_DAILY_LIMIT: process.env.DEFAULT_DAILY_LIMIT || null,
     parsedDefaultDailyLimit,
-    TEST_MODE_LIMIT: process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "1",
+    TEST_MODE_LIMIT: process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "0.05",
+    TEST_MODE_LIMIT_WEI: process.env.TEST_MODE_LIMIT_WEI || null,
     parsedTestModeLimit,
     QIE_STABLECOIN_ADDRESS: process.env.QIE_STABLECOIN_ADDRESS || null,
     QUSDC_MODE: process.env.QUSDC_MODE || null,

@@ -7,7 +7,8 @@ const { LLMProvider } = require("./llmProvider");
 
 const WEI_PER_QIE = 10n ** 18n;
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
-const DEFAULT_TEST_MODE_LIMIT_QIE = "1";
+const DEFAULT_TEST_MODE_LIMIT_QIE = "0.05";
+const TESTNET_CHAIN_ID = 1983n;
 
 function nowIso() {
   return new Date().toISOString();
@@ -69,11 +70,6 @@ function readTestModeLimitWei(options = {}) {
   );
 }
 
-function qieToWei(amount) {
-  const rounded = Math.floor(Number(amount) * 1_000_000);
-  return (BigInt(rounded) * WEI_PER_QIE) / 1_000_000n;
-}
-
 function weiToQieNumber(amountWei) {
   return Number(ethers.formatUnits(amountWei, 18));
 }
@@ -113,6 +109,19 @@ function spendLimitFromConstraints(constraints, zeroGateNames = []) {
   }
 
   const positiveConstraints = constraints.filter((constraint) => constraint.value > 0n);
+  if (positiveConstraints.length === 0) {
+    return {
+      safeSpendLimitWei: 0n,
+      limitingConstraint: constraints
+        .filter((constraint) => constraint.value === 0n)
+        .map((constraint) => constraint.name)
+        .join("+") || "none",
+      ignoredZeroConstraints: constraints
+        .filter((constraint) => constraint.value === 0n)
+        .map((constraint) => constraint.name)
+    };
+  }
+
   const limitingConstraint = minimumConstraint(positiveConstraints);
 
   return {
@@ -382,7 +391,7 @@ class AgentRuntime {
       ? onChainDailyLimit
       : this.defaultDailyLimit;
     const remainingWei = enforceableLimit > combinedSpent ? enforceableLimit - combinedSpent : 0n;
-    const testnetCapWei = BigInt(CHAIN_ID) === 1983n ? this.testModeLimit : this.defaultDailyLimit;
+    const testnetCapWei = BigInt(CHAIN_ID) === TESTNET_CHAIN_ID ? this.testModeLimit : this.defaultDailyLimit;
     const constraints = [
       { name: "enforceableLimit", value: enforceableLimit },
       { name: "remainingWei", value: remainingWei },

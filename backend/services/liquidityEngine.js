@@ -38,6 +38,7 @@ const REASONS = {
   PAIR_CONTRACT_MISSING: "QIEDEX_PAIR_MISSING",
   PAIR_EMPTY: "QIEDEX_NO_LIQUIDITY",
   GET_PAIR_FAILED: "QIEDEX_GET_PAIR_CALL_FAILED",
+  FACTORY_ABI_MISMATCH: "QIEDEX_FACTORY_ABI_MISMATCH",
   CODE_CHECK_FAILED: "QIEDEX_CONTRACT_CODE_CHECK_FAILED",
   RESERVE_CHECK_FAILED: "QIEDEX_PAIR_RESERVE_CHECK_FAILED"
 };
@@ -86,6 +87,23 @@ function isContract(value) {
 
 function errorReason(error) {
   return error?.shortMessage || error?.reason || error?.message || String(error);
+}
+
+function isFactoryInterfaceFailure(error) {
+  const text = [
+    error?.code,
+    error?.shortMessage,
+    error?.reason,
+    error?.message
+  ].filter(Boolean).join(" ").toLowerCase();
+  const revertData = error?.data || error?.info?.error?.data || error?.revert?.data || null;
+
+  return text.includes("could not decode result data")
+    || text.includes("bad data")
+    || text.includes("empty result")
+    || text.includes("missing revert data")
+    || text.includes("no data present")
+    || (error?.code === "CALL_EXCEPTION" && (!revertData || revertData === "0x"));
 }
 
 function logFailure(eventType, error, fields = {}) {
@@ -369,13 +387,16 @@ async function inspectPair(factory, tokenA, tokenB) {
 
     return { pair: ethers.getAddress(pair), reason: null, factory: factoryAddress };
   } catch (error) {
+    const reason = isFactoryInterfaceFailure(error) ? REASONS.FACTORY_ABI_MISMATCH : REASONS.GET_PAIR_FAILED;
     const diagnostic = logFailure("qiedex_get_pair_failed", error, {
-      reason: REASONS.GET_PAIR_FAILED,
+      reason,
+      errorDetail: errorReason(error),
       factory: factoryAddress,
       tokenA: normalizedTokenA,
-      tokenB: normalizedTokenB
+      tokenB: normalizedTokenB,
+      selector: ethers.id("getPair(address,address)").slice(0, 10)
     });
-    return { pair: null, reason: REASONS.GET_PAIR_FAILED, diagnostic };
+    return { pair: null, reason, diagnostic };
   }
 }
 
@@ -652,8 +673,8 @@ class LiquidityEngine {
 
     try {
       const inputToken = normalizeAddress("inputToken", tokenIn);
-    const outputToken = normalizeAddress("outputToken", tokenOut);
-    const routerAddress = normalizeAddress("router", await contractAddress(this.router));
+      const outputToken = normalizeAddress("outputToken", tokenOut);
+      const routerAddress = normalizeAddress("router", await contractAddress(this.router));
       const routerCode = await verifyContractCode(
         providerFromContract(this.router),
         "QIEDEX Router",
@@ -667,7 +688,7 @@ class LiquidityEngine {
           inputToken,
           outputToken,
           amountIn,
-          status: "skipped",
+          status: "failed",
           reason: routerCode.reason,
           recipient: owner
         });
