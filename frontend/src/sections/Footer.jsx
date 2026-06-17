@@ -1,11 +1,32 @@
 import React from "react";
 
-const LINKS = {
-  Product: ["Dashboard", "API reference", "SDK", "Smart contracts", "Changelog"],
-  Company: ["About", "Blog", "Security", "Privacy policy", "Terms of service"],
-  Developers: ["Documentation", "GitHub", "npm package", "Status page", "Community"],
-  Resources: ["Agent quickstart", "Budget policies", "QIE Pass guide", "Architecture overview", "Support"],
-};
+const LINKS = [
+  {
+    category: "Product",
+    items: [
+      { label: "Dashboard", href: "#dashboard" },
+      { label: "API Reference", href: "#api-reference" },
+      { label: "How It Works", href: "#how-it-works" },
+      { label: "Developer Integration", href: "#developers" },
+    ],
+  },
+  {
+    category: "Resources",
+    items: [
+      { label: "GitHub", href: "https://github.com/Kunmiesther/SpendGrid", external: true },
+      { label: "QIE", href: "https://x.com/qieblockchain", external: true },
+      { label: "SpendGrid", href: "https://x.com/SpendGridLabs", external: true },
+    ],
+  },
+  {
+    category: "Ecosystem",
+    items: [
+      { label: "QIE Explorer", href: "https://testnet.qie.digital/", external: true },
+      { label: "QIE Pass", href: "https://qiepass.qie.digital/", external: true },
+      { label: "QIE Blockchain", href: "https://www.qie.digital/", external: true },
+    ],
+  },
+];
 
 export default function Footer() {
   return (
@@ -22,22 +43,23 @@ export default function Footer() {
               Autonomous Treasury infrastructure for AI agents. Programmable budgets, verifiable
               identity, real-time control.
             </p>
-            <div className="flex gap-4 mt-8">
-              <a href="#" className="btn-secondary text-xs px-4 py-2">Get started</a>
-              <a href="#" className="btn-ghost text-xs">Read docs</a>
-            </div>
           </div>
 
           {/* Link columns */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-8">
-            {Object.entries(LINKS).map(([category, items]) => (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-8">
+            {LINKS.map(({ category, items }) => (
               <div key={category}>
                 <p className="stat-label mb-4">{category}</p>
                 <ul className="space-y-3">
                   {items.map((item) => (
-                    <li key={item}>
-                      <a href="#" className="text-body-sm text-ink-3 hover:text-ink-1 transition-colors duration-150">
-                        {item}
+                    <li key={item.label}>
+                      <a
+                        href={item.href}
+                        target={item.external ? "_blank" : undefined}
+                        rel={item.external ? "noopener noreferrer" : undefined}
+                        className="text-body-sm text-ink-3 hover:text-ink-1 transition-colors duration-150"
+                      >
+                        {item.label}
                       </a>
                     </li>
                   ))}
@@ -56,9 +78,6 @@ export default function Footer() {
             &copy; {new Date().getFullYear()} SpendGrid, Inc. All rights reserved.
           </p>
           <div className="flex items-center gap-6">
-            <a href="#" className="text-body-sm text-ink-4 hover:text-ink-2 transition-colors">Privacy</a>
-            <a href="#" className="text-body-sm text-ink-4 hover:text-ink-2 transition-colors">Terms</a>
-            <a href="#" className="text-body-sm text-ink-4 hover:text-ink-2 transition-colors">Security</a>
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full FF2D78" />
               <span className="text-body-sm text-ink-4">All systems operational</span>

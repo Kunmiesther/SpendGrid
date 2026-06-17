@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useInView } from "../hooks/useInView";
 import { useLiveSpend } from "../hooks/useLiveSpend";
 
+const QIE_TX_EXPLORER_URL = "https://testnet.qie.digital/tx/";
+
 function SpendStat({ label, value, mono = true, accent = false }) {
   return (
     <div className="border-b border-wire last:border-b-0 py-6 first:pt-0">
@@ -25,6 +27,21 @@ function SpendStat({ label, value, mono = true, accent = false }) {
 function shortHash(hash) {
   if (!hash) return "None";
   return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
+}
+
+function TxHashLink({ hash }) {
+  if (!hash) return "None";
+
+  return (
+    <a
+      href={`${QIE_TX_EXPLORER_URL}${hash}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="hover:text-ink-0 transition-colors underline decoration-wire underline-offset-4"
+    >
+      {shortHash(hash)}
+    </a>
+  );
 }
 
 function BudgetBar({ used, total }) {
@@ -86,7 +103,8 @@ export default function LiveSpend() {
   const executionLabel = latestIntent?.status || "None";
 
   return (
-    <section id="live-spend" ref={ref} className="bg-surface-0 border-t border-wire py-section">
+    <section id="dashboard" ref={ref} className="bg-surface-0 border-t border-wire py-section">
+      <span id="live-spend" className="block -mt-20 pt-20" aria-hidden="true" />
       <div className="container-grid">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -127,7 +145,7 @@ export default function LiveSpend() {
             <SpendStat label="Last policy decision" value={decisionLabel} mono={false} />
             <SpendStat label="Latest validation" value={validationLabel} mono={false} />
             <SpendStat label="Latest execution" value={executionLabel} mono={false} />
-            <SpendStat label="Last transaction hash" value={shortHash(lastTransactionHash)} />
+            <SpendStat label="Last transaction hash" value={<TxHashLink hash={lastTransactionHash} />} />
             <SpendStat label="Payments processed" value={fmt(txCount)} />
             <SpendStat label="Intents received" value={fmt(intentCount)} />
             <SpendStat label="QIE Pass" value={snapshot.qiePass?.status || "unknown"} mono={false} />

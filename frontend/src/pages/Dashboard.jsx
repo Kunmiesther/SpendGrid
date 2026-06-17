@@ -2,6 +2,8 @@ import React from "react";
 import { motion } from "framer-motion";
 import { useAgentSnapshot } from "../hooks/useAgentSnapshot";
 
+const QIE_TX_EXPLORER_URL = "https://testnet.qie.digital/tx/";
+
 function Panel({ children, className = "" }) {
   return (
     <motion.section
@@ -32,6 +34,21 @@ function shortHash(value) {
   if (!value) return "None";
   if (value.length <= 18) return value;
   return `${value.slice(0, 10)}...${value.slice(-6)}`;
+}
+
+function TxHashLink({ hash, className = "" }) {
+  if (!hash) return "None";
+
+  return (
+    <a
+      href={`${QIE_TX_EXPLORER_URL}${hash}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`hover:text-ink-1 transition-colors underline decoration-wire underline-offset-4 ${className}`}
+    >
+      {shortHash(hash)}
+    </a>
+  );
 }
 
 function formatDate(value) {
@@ -143,7 +160,9 @@ export default function Dashboard() {
 
           <Panel>
             <p className="stat-label mb-2">Last transaction</p>
-            <h2 className="text-xl md:text-2xl font-medium text-ink-0 mb-5">{shortHash(transaction.txHash)}</h2>
+            <h2 className="text-xl md:text-2xl font-medium text-ink-0 mb-5">
+              <TxHashLink hash={transaction.txHash} />
+            </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Stat label="Status" value={transaction.status || "none"} />
               <Stat label="Amount" value={`${transaction.amount || "0"} QUSDC`} />
@@ -181,7 +200,7 @@ export default function Dashboard() {
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Stat label="Recipient" value={shortHash(intent.recipient)} />
                   <Stat label="Amount" value={`${intent.amount || "0"} QUSDC`} />
-                  <Stat label="Tx" value={shortHash(intent.txHash)} />
+                  <Stat label="Tx" value={<TxHashLink hash={intent.txHash} />} />
                 </div>
                 {(intent.validation?.reason || intent.execution?.reason || intent.decision?.reasoning) && (
                   <p className="mt-3 text-body-sm text-ink-2 break-words">
