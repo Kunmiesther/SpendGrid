@@ -4,6 +4,7 @@ const { assertQieTestnet, makeStreamVaultAdapter } = require("./contracts");
 const { CHAIN_ID, NETWORK_NAME } = require("./deployment");
 const { isMockQusdcMode } = require("./qusdcMode");
 const { bigintJson, createId, findEvent, hashPrompt, nowIso, toPositiveUint } = require("./utils");
+const { AllowanceManager } = require("../services/allowanceManager");
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
 const DEFAULT_TEST_MODE_LIMIT_QIE = "0.05";
@@ -60,6 +61,11 @@ class AutonomousAgentEngine {
       "DEFAULT_DAILY_LIMIT"
     );
     this.testModeLimit = readTestModeLimitWei(options);
+    this.allowanceManager = options.allowanceManager || new AllowanceManager({
+      cache: options.allowanceCache,
+      approvalPolicy: options.approvalPolicy,
+      approvalAmountWei: options.approvalAmountWei
+    });
     this.ready = false;
     this.queue = Promise.resolve();
   }
@@ -269,6 +275,14 @@ class AutonomousAgentEngine {
     if (!funding.sufficient) {
       throw new Error(`QUSDC balance is insufficient for payment: ${funding.reason || "INSUFFICIENT_QUSDC"}`);
     }
+    const stream = await this.contracts.vault.getStream(streamId);
+    await this._ensureVaultAllowance({
+      runId,
+      agentId,
+      streamId,
+      owner: stream.payer,
+      amount
+    });
     const tx = await this.streamVault.executePayment(streamId, units);
     const receipt = await tx.wait();
 
@@ -282,6 +296,25 @@ class AutonomousAgentEngine {
       amount,
       units,
       ratePerUnit
+    });
+  }
+
+  async _ensureVaultAllowance({ runId, agentId, streamId, owner, amount }) {
+    return this.allowanceManager.ensureAllowance({
+      token: this.contracts.qusdc,
+      tokenAddress: this.contracts.addresses.qusdc,
+      signer: this.contracts.signer,
+      owner,
+      spender: this.contracts.addresses.vault,
+      amount,
+      chainId: CHAIN_ID,
+      ledger: this.ledger,
+      metadata: {
+        runId,
+        agentId,
+        streamId,
+        interactionType: "executePayment"
+      }
     });
   }
 

@@ -59,7 +59,7 @@ npm run backend
 - `POST /pause-agent`
 - `GET /status/:agentId`
 
-Payments are real ERC20 `transferFrom` settlements from the stream payer to the receiver. The payer must have QIE stablecoin balance and must approve `StreamVault` before `executePayment` can settle.
+Payments are real ERC20 `transferFrom` settlements from the stream payer to the receiver. For backend-controlled streams, the runtime reads the current QUSDC allowance, submits a `StreamVault` approval when needed, waits for confirmation, re-reads allowance, and only then executes the payment. The default approval policy is `QUSDC_APPROVAL_POLICY=max`; set `QUSDC_APPROVAL_POLICY=configured` with `QUSDC_APPROVAL_AMOUNT_WEI`, or `QUSDC_APPROVAL_POLICY=exact`, to change that behavior.
 
 ## Autonomous Agent Engine
 

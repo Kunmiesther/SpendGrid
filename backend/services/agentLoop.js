@@ -111,7 +111,19 @@ class AgentLoop {
     this.totalCycles += 1;
 
     try {
-      const task = this.taskQueue.shift() || this._simulateTask();
+      const task = this.taskQueue.shift();
+      if (!task) {
+        this.lastDecision = {
+          action: "idle",
+          reasoning: "No external payment intent or queued task is available for evaluation."
+        };
+        this.lastTransactionHash = null;
+        this.lastError = null;
+        return {
+          status: "idle",
+          decision: this.lastDecision
+        };
+      }
       const result = await this.agentRuntime.run(task);
 
       this.lastDecision = result.decision || null;
@@ -136,13 +148,7 @@ class AgentLoop {
   }
 
   _simulateTask() {
-    return {
-      task: [
-        "Autonomously evaluate whether SpendGrid should pay for this cycle's AI execution.",
-        "Spend only if the expected economic value exceeds the payment cost.",
-        "Hold if budget risk, low confidence, or weak value signal is detected."
-      ].join(" ")
-    };
+    return null;
   }
 }
 

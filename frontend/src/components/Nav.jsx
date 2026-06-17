@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useWallet } from "../hooks/useWallet";
 
 const NAV_LINKS = [
+  { label: "Dashboard", href: "/dashboard" },
   { label: "How it works", href: "#how-it-works" },
   { label: "Live spend", href: "#live-spend" },
   { label: "Identity", href: "#identity" },

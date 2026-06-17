@@ -1,74 +1,57 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ethers } from "ethers";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { loadDeployment } from "../lib/deployment";
+import { useAgentSnapshot } from "./useAgentSnapshot";
 
 const DEFAULT_AGENT_ID = process.env.REACT_APP_AGENT_ID || "1";
 const DEFAULT_AGENT_PROMPT =
   process.env.REACT_APP_AGENT_PROMPT || "Run a bounded SpendGrid inference payment on QIE testnet.";
 const DEFAULT_RECEIVER = process.env.REACT_APP_AGENT_RECEIVER || "";
-const DEFAULT_RATE_PER_UNIT = process.env.REACT_APP_AGENT_RATE_PER_UNIT || "1";
+const DEFAULT_INTENT_AMOUNT = process.env.REACT_APP_PAYMENT_INTENT_AMOUNT || process.env.REACT_APP_AGENT_RATE_PER_UNIT || "1";
 
 export function useAgentRuntime(interval = 4000) {
+  const live = useAgentSnapshot(interval);
   const [deployment, setDeployment] = useState(null);
-  const [status, setStatus] = useState(null);
-  const [loopStatus, setLoopStatus] = useState(null);
-  const [history, setHistory] = useState([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
-  const timerRef = useRef(null);
 
   const agentId = DEFAULT_AGENT_ID;
+  const liveRefresh = live.refresh;
+  const liveSnapshot = live.snapshot;
 
   const refresh = useCallback(async () => {
     try {
-      const [nextDeployment, nextStatus, nextHistory] = await Promise.all([
+      const [nextDeployment] = await Promise.all([
         loadDeployment(),
-        api.getAgentLoopStatus(),
-        api.getAgentHistory({ agentId, limit: 50 }),
+        liveRefresh()
       ]);
-
       setDeployment(nextDeployment);
-      setLoopStatus(nextStatus);
-      setStatus(nextStatus);
-      setHistory(nextHistory.records || []);
       setError(null);
     } catch (err) {
       setError(err.message);
     }
-  }, [agentId]);
+  }, [liveRefresh]);
 
-  const buildLoopTask = useCallback(async () => {
+  const buildPaymentIntent = useCallback(async () => {
     const activeDeployment = deployment || (await loadDeployment());
-    const task = {
+    return {
       agentId,
-      task: DEFAULT_AGENT_PROMPT,
-      prompt: DEFAULT_AGENT_PROMPT,
-      ratePerUnit: DEFAULT_RATE_PER_UNIT,
-      closeAfterRun: false,
+      recipient: DEFAULT_RECEIVER || activeDeployment?.deployer || activeDeployment?.addresses?.agentRegistry,
+      amount: DEFAULT_INTENT_AMOUNT,
+      metadata: {
+        task: DEFAULT_AGENT_PROMPT,
+        source: "dashboard"
+      }
     };
+  }, [agentId, deployment]);
 
-    const activeRun = history.find(
-      (record) => record.status === "spent" && record.transaction?.executePayment?.streamId
-    );
-
-    if (activeRun?.transaction?.executePayment?.streamId) {
-      task.streamId = activeRun.transaction.executePayment.streamId;
-      delete task.ratePerUnit;
-    } else {
-      task.receiver = DEFAULT_RECEIVER || activeDeployment?.deployer || activeDeployment?.addresses?.agentRegistry;
-    }
-
-    return task;
-  }, [agentId, deployment, history]);
-
-  const startAgent = useCallback(async () => {
+  const submitIntent = useCallback(async () => {
     setRunning(true);
     setError(null);
     try {
-      const task = await buildLoopTask();
-      const result = await api.startAgentLoop({ tasks: [task] });
-      await refresh();
+      const intent = await buildPaymentIntent();
+      const result = await api.submitPaymentIntent(intent);
+      await liveRefresh();
       return result;
     } catch (err) {
       setError(err.message);
@@ -76,16 +59,14 @@ export function useAgentRuntime(interval = 4000) {
     } finally {
       setRunning(false);
     }
-  }, [buildLoopTask, refresh]);
+  }, [buildPaymentIntent, liveRefresh]);
 
   const stopAgent = useCallback(async () => {
     setRunning(true);
     setError(null);
     try {
       const result = await api.stopAgentLoop();
-      setLoopStatus(result);
-      setStatus(result);
-      await refresh();
+      await liveRefresh();
       return result;
     } catch (err) {
       setError(err.message);
@@ -93,36 +74,38 @@ export function useAgentRuntime(interval = 4000) {
     } finally {
       setRunning(false);
     }
-  }, [refresh]);
+  }, [liveRefresh]);
 
   useEffect(() => {
-    refresh();
-    timerRef.current = setInterval(refresh, interval);
-    return () => clearInterval(timerRef.current);
-  }, [interval, refresh]);
+    loadDeployment()
+      .then(setDeployment)
+      .catch((err) => setError(err.message));
+  }, []);
 
-  const contractAddresses = deployment?.addresses || {};
-  const lastDecision = loopStatus?.lastDecision || null;
-  const lastTransactionHash = loopStatus?.lastTransactionHash || null;
-  const totalSpent = loopStatus?.cumulativeSpending
-    ? Number(ethers.formatEther(loopStatus.cumulativeSpending))
-    : 0;
+  const contractAddresses = liveSnapshot.contracts || deployment?.addresses || {};
+  const effectiveLoopStatus = liveSnapshot.runtime?.loop || null;
+  const lastDecision = liveSnapshot.decision || effectiveLoopStatus?.lastDecision || null;
+  const lastTransactionHash = liveSnapshot.transaction?.txHash || effectiveLoopStatus?.lastTransactionHash || null;
+  const totalSpent = Number(liveSnapshot.metrics?.totalSpent || 0);
 
   return useMemo(
     () => ({
       agentId,
       contractAddresses,
       deployment,
-      error,
-      history,
+      error: error || live.error,
+      history: liveSnapshot.history?.runtime || [],
+      intents: liveSnapshot.history?.intents || [],
       lastDecision,
       lastTransactionHash,
-      loopStatus,
+      loopStatus: effectiveLoopStatus,
       refresh,
-      running: running || Boolean(loopStatus?.inFlight),
-      startAgent,
+      running: running || Boolean(effectiveLoopStatus?.inFlight),
+      snapshot: liveSnapshot,
+      startAgent: submitIntent,
+      submitIntent,
       stopAgent,
-      status,
+      status: liveSnapshot.runtime || null,
       totalSpent,
     }),
     [
@@ -130,14 +113,14 @@ export function useAgentRuntime(interval = 4000) {
       contractAddresses,
       deployment,
       error,
-      history,
+      live.error,
       lastDecision,
       lastTransactionHash,
-      loopStatus,
+      effectiveLoopStatus,
+      liveSnapshot,
       refresh,
       running,
-      startAgent,
-      status,
+      submitIntent,
       stopAgent,
       totalSpent,
     ]

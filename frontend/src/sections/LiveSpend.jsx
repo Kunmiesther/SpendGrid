@@ -52,9 +52,14 @@ export default function LiveSpend() {
   const {
     activeAgent,
     agents,
+    connected,
+    error,
+    intentCount,
     lastDecision,
     lastTransactionHash,
+    latestIntent,
     loopStatus,
+    snapshot,
     totalSpend,
     totalBudget,
     remaining,
@@ -65,10 +70,20 @@ export default function LiveSpend() {
     n.toLocaleString(undefined, {
       maximumFractionDigits: 6,
     });
+  const tokenSymbol = "QUSDC";
   const decisionLabel = lastDecision
-    ? `${lastDecision.action}${lastDecision.amount ? ` ${lastDecision.amount} QIE` : ""}`
+    ? `${lastDecision.action || "decision"}${lastDecision.amount ? ` ${lastDecision.amount} ${tokenSymbol}` : ""}`
     : "None";
-  const statusLabel = loopStatus?.inFlight ? "Executing" : loopStatus?.running ? "Running" : "Stopped";
+  const statusLabel = snapshot.runtime?.status === "executing_intent"
+    ? "Executing intent"
+    : snapshot.runtime?.status === "validating_intent"
+      ? "Validating intent"
+      : loopStatus?.running
+        ? "Compatibility loop"
+        : "Intent-ready";
+  const transportLabel = connected ? "Live stream" : "Polling";
+  const validationLabel = latestIntent?.validation?.status || "None";
+  const executionLabel = latestIntent?.status || "None";
 
   return (
     <section id="live-spend" ref={ref} className="bg-surface-0 border-t border-wire py-section">
@@ -79,12 +94,12 @@ export default function LiveSpend() {
           transition={{ duration: 0.6 }}
           className="mb-16"
         >
-          <p className="tag mb-6">Live spend</p>
+          <p className="tag mb-6">Live intents</p>
           <h2 className="text-display-md font-sans font-medium text-ink-0 max-w-xl text-balance">
-            Spending that updates as agents work.
+            Spending that updates when intents execute.
           </h2>
           <p className="text-body-md text-ink-2 max-w-md mt-4">
-            Every payment stream is reflected here in real time. No polling. No manual refresh.
+            Payment intents, validation outcomes, QIE Pass, budget, and execution records sync from the backend automatically.
           </p>
         </motion.div>
 
@@ -102,16 +117,25 @@ export default function LiveSpend() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60" />
 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
               </span>
-              <span className="font-mono text-label text-ink-3 uppercase tracking-widest">{statusLabel}</span>
+              <span className="font-mono text-label text-ink-3 uppercase tracking-widest">{statusLabel} - {transportLabel}</span>
             </div>
 
             <SpendStat label="Active agent" value={activeAgent.id} mono accent />
-            <SpendStat label="Daily budget" value={`${fmt(totalBudget)} QIE`} accent />
-            <SpendStat label="Remaining budget" value={`${fmt(remaining)} QIE`} />
-            <SpendStat label="Total spent today" value={`${fmt(totalSpend)} QIE`} />
-            <SpendStat label="Last AI decision" value={decisionLabel} mono={false} />
+            <SpendStat label="Daily budget" value={`${fmt(totalBudget)} ${tokenSymbol}`} accent />
+            <SpendStat label="Remaining budget" value={`${fmt(remaining)} ${tokenSymbol}`} />
+            <SpendStat label="Total spent today" value={`${fmt(totalSpend)} ${tokenSymbol}`} />
+            <SpendStat label="Last policy decision" value={decisionLabel} mono={false} />
+            <SpendStat label="Latest validation" value={validationLabel} mono={false} />
+            <SpendStat label="Latest execution" value={executionLabel} mono={false} />
             <SpendStat label="Last transaction hash" value={shortHash(lastTransactionHash)} />
-            <SpendStat label="Transactions today" value={fmt(txCount)} />
+            <SpendStat label="Payments processed" value={fmt(txCount)} />
+            <SpendStat label="Intents received" value={fmt(intentCount)} />
+            <SpendStat label="QIE Pass" value={snapshot.qiePass?.status || "unknown"} mono={false} />
+            {error && (
+              <p className="mt-6 font-mono text-label text-amber-500 uppercase tracking-widest break-words">
+                {error}
+              </p>
+            )}
 
             <BudgetBar used={totalSpend} total={totalBudget} />
           </motion.div>
@@ -141,7 +165,7 @@ export default function LiveSpend() {
           className="mt-6 border border-wire rounded-sm overflow-hidden"
         >
           <div className="hidden md:grid grid-cols-5 bg-surface-2 border-b border-wire px-6 py-3">
-            {["Agent ID", "Task", "Spent", "Budget", "Status"].map((h) => (
+            {["Agent ID", "Latest intent", "Spent", "Budget", "Status"].map((h) => (
               <span key={h} className="stat-label">{h}</span>
             ))}
           </div>
@@ -152,11 +176,11 @@ export default function LiveSpend() {
             >
               <span className="font-mono text-mono-sm text-ink-0">{a.id}</span>
               <span className="text-body-sm text-ink-2">{a.task}</span>
-              <span className="font-mono text-mono-sm text-ink-1">{a.spend.toLocaleString()} QIE</span>
-              <span className="font-mono text-mono-sm text-ink-3">{a.budget.toLocaleString()} QIE</span>
+              <span className="font-mono text-mono-sm text-ink-1">{a.spend.toLocaleString()} {tokenSymbol}</span>
+              <span className="font-mono text-mono-sm text-ink-3">{a.budget.toLocaleString()} {tokenSymbol}</span>
               <span>
                 <span className={`inline-block font-mono text-label uppercase tracking-wide px-2 py-0.5 rounded-sm ${
-                  a.status === "active"
+                  a.status === "active" || a.status === "running"
                     ? "bg-green-900/30 text-green-400"
                     : "bg-amber-900/20 text-amber-500"
                 }`}>

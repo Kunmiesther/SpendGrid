@@ -1,5 +1,5 @@
-import { createStream, executePayment } from "./vault.js";
 import {
+  SpendGridError,
   assertAddress,
   assertPositiveAgentId,
   normalizeMode,
@@ -24,50 +24,39 @@ export async function pay(sdk, input = {}) {
   const agentId = assertPositiveAgentId(input.agentId || sdk.agentId);
   const mode = normalizeMode(input.mode || "instant");
   const metadata = input.metadata || null;
-
-  if (mode === "stream" && input.streamId) {
-    const receipt = await executePayment(sdk, {
-      agentId,
-      streamId: input.streamId,
-      units: input.units || 1
-    });
-
-    return stringifyBigInts({
-      txHash: receipt.txHash,
-      status: receipt.status,
-      amount: receipt.amount,
-      streamId: receipt.streamId,
-      timestamp: receipt.timestamp,
-      metadata
-    });
-  }
-
-  const receiver = assertAddress(input.receiver, "receiver");
+  const receiver = assertAddress(input.recipient || input.receiver, "recipient");
   const amountWei = input.amountWei !== undefined
     ? BigInt(input.amountWei)
     : parseTokenAmount(input.amount, sdk.tokenDecimals);
 
-  const { signerAddress } = await sdk.assertAgentOperator(agentId);
-  await sdk.assertSpendAllowed({ agentId, amountWei });
-  await sdk.assertTokenAllowance({ owner: signerAddress, amountWei });
+  if (!sdk.backendUrl) {
+    throw new SpendGridError("backendUrl is required because sdk.pay submits a payment intent to SpendGrid backend validation", "BACKEND_URL_REQUIRED", {
+      agentId: agentId.toString(),
+      mode
+    });
+  }
 
-  const stream = await createStream(sdk, {
+  const result = await sdk.submitPaymentIntent({
+    intentId: input.intentId,
+    recipient: receiver,
+    amountWei,
     agentId,
-    receiver,
-    ratePerUnitWei: amountWei
-  });
-  const payment = await executePayment(sdk, {
-    agentId,
-    streamId: stream.streamId,
-    units: 1
+    streamId: mode === "stream" ? input.streamId : null,
+    metadata
   });
 
   return stringifyBigInts({
-    txHash: payment.txHash,
-    status: payment.status,
-    amount: payment.amount,
-    streamId: payment.streamId,
-    timestamp: payment.timestamp,
-    metadata
+    intentId: result.intentId,
+    runId: result.runId,
+    txHash: result.receipt?.txHash || result.transaction?.executePayment?.txHash || null,
+    status: result.status,
+    accepted: result.accepted,
+    amount: result.receipt?.amountWei || result.transaction?.executePayment?.amountWei || amountWei,
+    streamId: result.receipt?.streamId || result.transaction?.executePayment?.streamId || null,
+    timestamp: result.receipt?.timestamp || result.transaction?.executePayment?.timestamp || new Date().toISOString(),
+    metadata,
+    validation: result.validation,
+    decision: result.decision,
+    transaction: result.transaction || null
   });
 }

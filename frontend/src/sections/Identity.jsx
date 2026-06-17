@@ -1,73 +1,82 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { useInView } from "../hooks/useInView";
-import { useDeployment } from "../hooks/useDeployment";
+import { useAgentSnapshot } from "../hooks/useAgentSnapshot";
 import { shortenAddress } from "../lib/wallet";
 
-const ATTRS = [
-  { label: "Pass type", value: "Operator — Tier 2" },
-  { label: "Registry ID", value: "SGR-0047" },
-  { label: "Issued", value: "2025-03-11" },
-  { label: "Expiry", value: "2026-03-11" },
-  { label: "Status", value: "Verified", highlight: true },
-  { label: "Services allowed", value: "14 of 14" },
-];
+function formatTimestamp(seconds) {
+  const value = Number(seconds || 0);
+  if (!value) return "Unavailable";
+  return new Date(value * 1000).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
+}
 
 export default function Identity() {
   const [ref, inView] = useInView(0.15);
-  const deployment = useDeployment();
-  const streamVault = deployment?.addresses?.streamVault;
+  const { snapshot } = useAgentSnapshot();
+  const streamVault = snapshot.contracts?.vault || snapshot.contracts?.streamVault;
+  const qiePass = snapshot.qiePass || {};
+  const agent = snapshot.agent || {};
+  const checks = qiePass.checks || {};
+  const attrs = [
+    { label: "Agent ID", value: agent.id ? `AGT-${String(agent.id).padStart(3, "0")}` : "Unavailable" },
+    { label: "Owner", value: agent.owner ? shortenAddress(agent.owner) : "Unavailable" },
+    { label: "Agent wallet", value: agent.agentWallet ? shortenAddress(agent.agentWallet) : "Unavailable" },
+    { label: "Issued", value: formatTimestamp(agent.createdAt) },
+    { label: "Status", value: qiePass.status || "unknown", highlight: true },
+    { label: "Vault allowed", value: checks.vaultWhitelisted ? "Yes" : "No", highlight: !checks.vaultWhitelisted },
+  ];
 
   return (
     <section id="identity" ref={ref} className="bg-surface-1 border-t border-wire py-section">
       <div className="container-grid">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-24 items-start">
-          {/* Left: copy + pass card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6 }}
           >
-            <p className="tag mb-6">QIE Pass — Agent identity</p>
+            <p className="tag mb-6">QIE Pass - Agent identity</p>
             <h2 className="text-display-md font-sans font-medium text-ink-0 text-balance mb-6">
               Every agent needs to prove who it is before it can spend.
             </h2>
             <p className="text-body-md text-ink-2 mb-10 max-w-md">
-              QIE Pass is a verifiable on-chain credential issued to each registered agent. Service
-              providers check the pass before accepting any payment stream — no integrations
-              required on their end.
+              QIE Pass state is read from the backend runtime and on-chain registry bindings for the active agent.
             </p>
 
-            {/* Pass card */}
             <div className="card-dark p-0 overflow-hidden max-w-sm">
-              {/* Card header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-wire">
                 <span className="font-mono text-label text-ink-3 uppercase tracking-widest">QIE Pass</span>
-                <span className="font-mono text-label text-green-400 uppercase tracking-widest">Active</span>
+                <span className={`font-mono text-label uppercase tracking-widest ${qiePass.verified ? "text-green-400" : "text-amber-500"}`}>
+                  {qiePass.verified ? "Verified" : qiePass.status || "Unknown"}
+                </span>
               </div>
 
-              {/* Attrs */}
               <div className="divide-y divide-wire">
-                {ATTRS.map((a) => (
-                  <div key={a.label} className="flex items-center justify-between px-6 py-4">
+                {attrs.map((a) => (
+                  <div key={a.label} className="flex items-center justify-between px-6 py-4 gap-4">
                     <span className="text-body-sm text-ink-3">{a.label}</span>
-                    <span className={`font-mono text-mono-sm ${a.highlight ? "text-ink-0" : "text-ink-1"}`}>
+                    <span className={`font-mono text-mono-sm text-right break-all ${a.highlight ? "text-ink-0" : "text-ink-1"}`}>
                       {a.value}
                     </span>
                   </div>
                 ))}
               </div>
 
-              {/* Card footer */}
               <div className="px-6 py-4 border-t border-wire">
-                <p className="font-mono text-label text-ink-4 truncate">
-                  {streamVault ? shortenAddress(streamVault) : "0x4f2a8c3d19e0b5f2a714d3e8...e91b2c91e"}
+                <p className="font-mono text-label text-ink-4 break-all">
+                  {qiePass.qiePassId || "QIE Pass ID unavailable"}
+                </p>
+                <p className="font-mono text-label text-ink-4 truncate mt-2">
+                  Vault {streamVault ? shortenAddress(streamVault) : "unavailable"}
                 </p>
               </div>
             </div>
           </motion.div>
 
-          {/* Right: standalone image block */}
           <motion.div
             initial={{ opacity: 0, x: 24 }}
             animate={inView ? { opacity: 1, x: 0 } : {}}
@@ -88,7 +97,6 @@ export default function Identity() {
           </motion.div>
         </div>
 
-        {/* How pass works */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={inView ? { opacity: 1, y: 0 } : {}}
@@ -97,16 +105,16 @@ export default function Identity() {
         >
           {[
             {
-              step: "Issue",
-              body: "When you register an agent, SpendGrid mints a QIE Pass bound to its wallet address and your operator account.",
+              step: "Registry",
+              body: checks.passBound ? "The QIE Pass ID resolves to the active agent in AgentRegistry." : "The backend has not confirmed the pass binding yet.",
             },
             {
-              step: "Attach",
-              body: "The pass is included in every payment stream header. Providers verify it on-chain in under 200ms.",
+              step: "Wallet",
+              body: checks.walletBound ? "The execution wallet is bound to the same agent ID." : "Execution wallet binding is not confirmed.",
             },
             {
-              step: "Revoke",
-              body: "A single API call or UI action revokes the pass instantly. All active streams are closed within one block.",
+              step: "Spend gate",
+              body: checks.vaultWhitelisted ? "StreamVault is whitelisted for this agent in SpendController." : "StreamVault is not whitelisted for this agent.",
             },
           ].map((item) => (
             <div key={item.step} className="bg-surface-1 p-8">

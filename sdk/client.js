@@ -77,7 +77,7 @@ export class SpendGridSDK {
     this.addresses = this._normalizeAddresses(this.deployment.addresses);
     this.provider = this._resolveProvider(options);
     this.signer = this._resolveSigner(options);
-    this.contracts = this._makeContracts();
+    this.contracts = this.provider ? this._makeContracts() : null;
     this.safeSpendLimitWei = this._resolveSafeSpendLimit(options);
   }
 
@@ -114,6 +114,26 @@ export class SpendGridSDK {
    */
   pay(options = {}) {
     return pay(this, options);
+  }
+
+  /**
+   * Submits a payment intent to the SpendGrid backend validation and execution flow.
+   */
+  submitPaymentIntent(intent = {}) {
+    if (!this.backendUrl) {
+      throw new SpendGridError("backendUrl is required to submit payment intents", "BACKEND_URL_REQUIRED");
+    }
+
+    return this.requestBackend("/payment-intents", {
+      method: "POST",
+      body: stringifyBigInts(intent)
+    }).catch((error) => {
+      const body = error?.details?.body;
+      if (body?.intentId && ["rejected", "failed"].includes(body.status)) {
+        return body;
+      }
+      throw error;
+    });
   }
 
   /**
@@ -497,6 +517,10 @@ export class SpendGridSDK {
 
     if (typeof globalThis !== "undefined" && globalThis.ethereum) {
       return new ethers.BrowserProvider(globalThis.ethereum);
+    }
+
+    if (this.backendUrl) {
+      return null;
     }
 
     throw new SpendGridError("provider, signer, rpcUrl, or window.ethereum is required", "PROVIDER_REQUIRED");

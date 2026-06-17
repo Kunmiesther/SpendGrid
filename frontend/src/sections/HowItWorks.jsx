@@ -10,18 +10,18 @@ const STEPS = [
   },
   {
     index: "02",
-    label: "Agent",
-    body: "The agent receives a task and determines which services it needs to call and what they cost.",
+    label: "External app",
+    body: "Your app submits a payment intent with recipient, amount, agent ID, and task metadata.",
   },
   {
     index: "03",
-    label: "Budget engine",
-    body: "SpendGrid checks the agent's on-chain policy. If the spend is within limits, it approves the payment stream.",
+    label: "Agent policy engine",
+    body: "SpendGrid invokes the agent policy only for that intent, then checks QIE Pass, budget, controller rules, and liquidity.",
   },
   {
     index: "04",
     label: "Payment engine",
-    body: "A micro-payment stream is opened, denominated in QIE Stablecoin, scoped to this task and provider.",
+    body: "If validation passes, the existing vault execution flow opens or uses a stream and settles the payment.",
   },
   {
     index: "05",
@@ -49,7 +49,7 @@ export default function HowItWorks() {
         >
           <p className="tag mb-6">How it works</p>
           <h2 className="text-display-md font-sans font-medium text-ink-0 max-w-lg text-balance">
-            From instruction to settlement in one continuous flow.
+            From payment intent to settlement in one validated flow.
           </h2>
         </motion.div>
 

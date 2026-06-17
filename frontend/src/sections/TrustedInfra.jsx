@@ -1,6 +1,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { useInView } from "../hooks/useInView";
+import { useAgentSnapshot } from "../hooks/useAgentSnapshot";
 
 const PILLARS = [
   {
@@ -11,7 +12,7 @@ const PILLARS = [
   {
     label: "On-chain identity",
     body:
-      "Every agent carries a QIE Pass — a verifiable credential that service providers can check before accepting a payment stream.",
+      "Every agent carries a QIE Pass - a verifiable credential that service providers can check before accepting a payment stream.",
   },
   {
     label: "Real-time control",
@@ -27,6 +28,15 @@ const PILLARS = [
 
 export default function TrustedInfra() {
   const [ref, inView] = useInView(0.15);
+  const { snapshot } = useAgentSnapshot();
+  const uptimeSeconds = snapshot.metrics?.uptimeSeconds || 0;
+  const uptimeMinutes = Math.floor(uptimeSeconds / 60);
+  const stats = [
+    { val: snapshot.network?.blockNumber ? snapshot.network.blockNumber.toLocaleString() : "Pending", note: "Latest QIE block" },
+    { val: `${uptimeMinutes}m`, note: "Backend uptime" },
+    { val: String(snapshot.metrics?.paymentsProcessed || 0), note: "Payments processed" },
+    { val: `${Number(snapshot.metrics?.totalSpent || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} QUSDC`, note: "Total settled" },
+  ];
 
   return (
     <section ref={ref} className="bg-surface-0 border-t border-wire py-section">
@@ -44,7 +54,7 @@ export default function TrustedInfra() {
             </h2>
             <p className="text-body-md text-ink-2 max-w-sm">
               Most payment rails assume a human authorizes every transaction. SpendGrid is built for
-              the opposite assumption — agents that act autonomously within the bounds you set.
+              the opposite assumption - agents that act autonomously within the bounds you set.
             </p>
           </motion.div>
 
@@ -72,14 +82,9 @@ export default function TrustedInfra() {
           transition={{ duration: 0.6, delay: 0.3 }}
           className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-px bg-wire border border-wire rounded-sm overflow-hidden"
         >
-          {[
-            { val: "< 1s", note: "Settlement time" },
-            { val: "99.97%", note: "Uptime, last 90 days" },
-            { val: "12M+", note: "Payments processed" },
-            { val: "SOC 2", note: "Type II certified" },
-          ].map((s) => (
+          {stats.map((s) => (
             <div key={s.note} className="bg-surface-1 px-8 py-7">
-              <p className="font-mono text-display-md font-medium text-ink-0 mb-1">{s.val}</p>
+              <p className="font-mono text-display-md font-medium text-ink-0 mb-1 break-words">{s.val}</p>
               <p className="text-label text-ink-3 uppercase tracking-widest">{s.note}</p>
             </div>
           ))}

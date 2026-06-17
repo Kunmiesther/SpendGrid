@@ -2,7 +2,7 @@ import type { BrowserProvider, JsonRpcProvider, Provider, Signer } from "ethers"
 
 export type SpendGridNetworkName = "qieTestnet";
 export type SpendGridPayMode = "instant" | "stream";
-export type SpendGridStatus = "confirmed" | "failed";
+export type SpendGridStatus = "executed" | "rejected" | "failed" | "confirmed";
 
 export interface SpendGridAddresses {
   agentRegistry: string;
@@ -56,7 +56,9 @@ export interface SpendGridPayInput {
   client?: SpendGridSDK;
   sdkOptions?: SpendGridSDKOptions;
   agentId?: string | number | bigint;
+  intentId?: string;
   receiver?: string;
+  recipient?: string;
   amount?: string | number | bigint;
   amountWei?: string | number | bigint;
   mode?: SpendGridPayMode;
@@ -66,11 +68,27 @@ export interface SpendGridPayInput {
 }
 
 export interface SpendGridReceipt {
-  txHash: string;
+  intentId?: string;
+  runId?: string;
+  txHash: string | null;
   status: SpendGridStatus;
+  accepted?: boolean;
   amount: string;
-  streamId: string;
+  streamId: string | null;
   timestamp: string;
+  metadata?: Record<string, unknown> | null;
+  validation?: Record<string, unknown>;
+  decision?: Record<string, unknown>;
+  transaction?: Record<string, unknown> | null;
+}
+
+export interface SpendGridPaymentIntent {
+  intentId?: string;
+  recipient: string;
+  amount?: string | number | bigint;
+  amountWei?: string | number | bigint;
+  agentId?: string | number | bigint;
+  streamId?: string | number | bigint | null;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -171,6 +189,7 @@ export class SpendGridSDK {
   createStream(options?: SpendGridVaultOptions): Promise<Record<string, unknown>>;
   executePayment(options?: SpendGridVaultOptions): Promise<Record<string, unknown>>;
   pay(options?: SpendGridPayInput): Promise<SpendGridReceipt>;
+  submitPaymentIntent(intent?: SpendGridPaymentIntent): Promise<Record<string, unknown>>;
   subscribe(options?: SpendGridSubscriptionOptions): () => void;
   emergencyPauseVault(options?: KillSwitchOptions): Promise<Record<string, unknown>>;
   routeRemainingFundsToSafeVault(options?: KillSwitchOptions): Promise<Record<string, unknown>>;

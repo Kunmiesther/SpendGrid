@@ -1,22 +1,14 @@
-import React, { useState } from "react";
+import React from "react";
 import { motion } from "framer-motion";
 import { useInView } from "../hooks/useInView";
 import { useAgentRuntime } from "../hooks/useAgentRuntime";
 
-const SERVICES = [
-  { id: "openai", label: "OpenAI Inference", enabled: true },
-  { id: "storage", label: "Walrus Storage", enabled: true },
-  { id: "oracle", label: "Pyth Oracle", enabled: false },
-  { id: "bridge", label: "Cross-chain Bridge", enabled: false },
-  { id: "vector", label: "Pinecone Vector DB", enabled: true },
-];
-
-function Toggle({ enabled, onChange }) {
+function Toggle({ enabled }) {
   return (
     <button
       role="switch"
       aria-checked={enabled}
-      onClick={onChange}
+      disabled
       className={`relative w-9 h-5 rounded-sm transition-colors duration-200 focus:outline-none flex-shrink-0 ${
         enabled ? "bg-ink-1" : "bg-surface-5"
       }`}
@@ -32,15 +24,22 @@ function Toggle({ enabled, onChange }) {
 
 export default function BudgetControl() {
   const [ref, inView] = useInView(0.1);
-  const { loopStatus, running, startAgent, stopAgent } = useAgentRuntime();
-  const [services, setServices] = useState(SERVICES);
-  const [dailyLimit, setDailyLimit] = useState(136000);
-  const [perAgent, setPerAgent] = useState(20000);
+  const { loopStatus, running, snapshot, submitIntent, stopAgent } = useAgentRuntime();
   const agentRunning = Boolean(loopStatus?.running);
-  const statusLabel = loopStatus?.inFlight ? "Executing" : agentRunning ? "Running" : "Stopped";
-
-  const toggleService = (id) =>
-    setServices((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
+  const statusLabel = snapshot.runtime?.status === "executing_intent"
+    ? "Executing intent"
+    : snapshot.runtime?.status === "validating_intent"
+      ? "Validating intent"
+      : agentRunning
+        ? "Compatibility loop"
+        : "Intent-ready";
+  const budget = snapshot.budget || {};
+  const agentLabel = `AGT-${String(snapshot.agentId || "1").padStart(3, "0")}`;
+  const services = [
+    { id: "vault", label: "StreamVault payments", enabled: Boolean(budget.vaultWhitelisted) },
+    { id: "qie-pass", label: "QIE Pass verified", enabled: Boolean(snapshot.qiePass?.verified) },
+    { id: "budget", label: "Daily budget available", enabled: Number(budget.remaining || 0) > 0 },
+  ];
 
   return (
     <section className="bg-surface-0 border-t border-wire py-section">
@@ -57,8 +56,7 @@ export default function BudgetControl() {
             Spending policy enforced at the protocol level.
           </h2>
           <p className="text-body-md text-ink-2 max-w-md mt-4">
-            Every constraint you set here is encoded on-chain. There is no server-side check that
-            can be bypassed.
+            Limits shown here are read from SpendController state and applied when payment intents are validated.
           </p>
         </motion.div>
 
@@ -77,35 +75,33 @@ export default function BudgetControl() {
                   className={`w-2 h-2 rounded-sm ${agentRunning ? "bg-green-500" : "bg-amber-500"}`}
                 />
                 <span className="font-mono text-label uppercase tracking-widest text-ink-2">
-                  Agent SGR-0047 - {statusLabel}
+                  Agent {agentLabel} - {statusLabel}
                 </span>
               </div>
               <button
-                onClick={() => (agentRunning ? stopAgent() : startAgent()).catch(() => {})}
+                onClick={() => submitIntent().catch(() => {})}
                 disabled={running}
                 className="btn-secondary text-xs px-4 py-2"
               >
-                {running ? "Working..." : agentRunning ? "Stop Agent" : "Start Agent"}
+                {running ? "Working..." : "Submit Intent"}
               </button>
             </div>
 
             {/* Limits */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-wire">
               <div className="bg-surface-2 px-8 py-7">
-                <label className="stat-label block mb-3">Daily limit (QIE)</label>
+                <label className="stat-label block mb-3">Daily limit (QUSDC)</label>
                 <input
-                  type="number"
-                  value={dailyLimit}
-                  onChange={(e) => setDailyLimit(Number(e.target.value))}
+                  readOnly
+                  value={budget.dailyLimit || "0"}
                   className="w-full bg-surface-3 border border-wire text-ink-0 font-mono text-body-md px-4 py-2 rounded-sm focus:outline-none focus:border-ink-3 transition-colors"
                 />
               </div>
               <div className="bg-surface-2 px-8 py-7">
-                <label className="stat-label block mb-3">Per-agent cap (QIE)</label>
+                <label className="stat-label block mb-3">Safe spend cap (QUSDC)</label>
                 <input
-                  type="number"
-                  value={perAgent}
-                  onChange={(e) => setPerAgent(Number(e.target.value))}
+                  readOnly
+                  value={budget.safeSpendLimit || "0"}
                   className="w-full bg-surface-3 border border-wire text-ink-0 font-mono text-body-md px-4 py-2 rounded-sm focus:outline-none focus:border-ink-3 transition-colors"
                 />
               </div>
@@ -116,10 +112,10 @@ export default function BudgetControl() {
               <p className="stat-label mb-4">Spending policy</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
-                  "Require QIE Pass on all streams",
-                  "Block streams over per-agent cap",
-                  "Emit events on every payment",
-                  "Auto-pause on policy violation",
+                  `Remaining: ${budget.remaining || "0"} QUSDC`,
+                  `Spent today: ${budget.spentToday || "0"} QUSDC`,
+                  `Limiter: ${budget.limitingConstraint || "unknown"}`,
+                  budget.paused ? "Agent is paused" : "Agent is unpaused",
                 ].map((rule) => (
                   <div key={rule} className="flex items-start gap-3">
                     <svg width="14" height="14" viewBox="0 0 14 14" className="text-ink-2 mt-0.5 flex-shrink-0" fill="none">
@@ -134,11 +130,11 @@ export default function BudgetControl() {
 
             {/* Apply */}
             <div className="px-8 py-5 border-t border-wire flex gap-3">
-              <button className="btn-primary" onClick={() => startAgent().catch(() => {})} disabled={running || agentRunning}>
-                Start Agent
+              <button className="btn-primary" onClick={() => submitIntent().catch(() => {})} disabled={running}>
+                Submit Payment Intent
               </button>
               <button className="btn-secondary" onClick={() => stopAgent().catch(() => {})} disabled={running || !agentRunning}>
-                Stop Agent
+                Stop Compatibility Loop
               </button>
             </div>
           </motion.div>
@@ -159,13 +155,13 @@ export default function BudgetControl() {
                 {services.map((s) => (
                   <div key={s.id} className="flex items-center justify-between px-6 py-4">
                     <span className="text-body-sm text-ink-1">{s.label}</span>
-                    <Toggle enabled={s.enabled} onChange={() => toggleService(s.id)} />
+                    <Toggle enabled={s.enabled} />
                   </div>
                 ))}
               </div>
             </motion.div>
 
-            {/* Kill switch */}
+            {/* Runtime stop */}
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={inView ? { opacity: 1, y: 0 } : {}}
@@ -173,9 +169,9 @@ export default function BudgetControl() {
               className="card-dark border-red-900/40 overflow-hidden"
             >
               <div className="px-6 py-5 border-b border-red-900/40">
-                <p className="font-mono text-label text-red-400 uppercase tracking-widest mb-1">Emergency stop</p>
+                <p className="font-mono text-label text-red-400 uppercase tracking-widest mb-1">Runtime stop</p>
                 <p className="text-body-sm text-ink-3">
-                  Closes all active streams and halts all agents immediately. This action takes effect within one block.
+                  Stops the legacy queued-task loop. Normal SpendGrid execution waits for explicit payment intents.
                 </p>
               </div>
               <div className="px-6 py-5">
@@ -184,7 +180,7 @@ export default function BudgetControl() {
                   disabled={running || !agentRunning}
                   className="w-full border border-red-800/50 bg-red-950/20 text-red-400 font-medium text-body-sm px-5 py-3 rounded-sm transition-transform duration-150 hover:scale-95 hover:bg-red-950/30"
                 >
-                  Kill all agents
+                  Stop compatibility loop
                 </button>
               </div>
             </motion.div>

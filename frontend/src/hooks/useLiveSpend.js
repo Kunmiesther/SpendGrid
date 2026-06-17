@@ -1,97 +1,65 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ethers } from "ethers";
-import { api } from "../lib/api";
+import { useMemo } from "react";
+import { useAgentSnapshot } from "./useAgentSnapshot";
 
 const DEFAULT_AGENT_ID = process.env.REACT_APP_AGENT_ID || "1";
 
-function weiToQie(value) {
-  try {
-    return Number(ethers.formatEther(value || "0"));
-  } catch (_error) {
-    return 0;
-  }
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function findBudget(history) {
-  const record = history.find((item) => item.budget?.enforceableLimit || item.budget?.defaultDailyLimit);
-  const budgetWei = record?.budget?.enforceableLimit || record?.budget?.defaultDailyLimit;
-  const budget = weiToQie(budgetWei);
-  return budget || Number(process.env.REACT_APP_AGENT_DAILY_LIMIT_QIE || 0);
-}
-
-function formatAgent(loopStatus, history) {
-  const agentId = DEFAULT_AGENT_ID;
-  const spentToday = weiToQie(loopStatus?.cumulativeSpending);
-  const paused = !loopStatus?.running;
-  const lastDecision = loopStatus?.lastDecision;
-  const lastRun = history.find((record) => record.decision || record.status);
-  const lastAction = lastDecision?.action || lastRun?.decision?.action || lastRun?.status;
+function formatAgent(snapshot) {
+  const agentId = String(snapshot.agentId || DEFAULT_AGENT_ID);
+  const budget = snapshot.budget || {};
+  const runtime = snapshot.runtime || {};
+  const lastDecision = snapshot.decision || runtime.loop?.lastDecision;
+  const active = Boolean(snapshot.agent?.active);
+  const paused = Boolean(budget.paused);
+  const executing = Boolean(runtime.status === "executing_intent" || runtime.status === "validating_intent" || runtime.loop?.inFlight);
+  const latestIntent = snapshot.history?.intents?.[0] || null;
 
   return {
     id: `AGT-${agentId.padStart(3, "0")}`,
-    task: lastAction || "Autonomous Execution",
-    spend: spentToday,
-    budget: findBudget(history),
-    status: paused ? "paused" : "active",
+    task: latestIntent?.metadata?.task || lastDecision?.action || runtime.status || "Intent policy evaluation",
+    spend: toNumber(budget.spentToday),
+    budget: toNumber(budget.dailyLimit),
+    remaining: toNumber(budget.remaining),
+    status: paused ? "paused" : executing ? "executing" : active ? "active" : "inactive",
   };
 }
 
 export function useLiveSpend(interval = 4000) {
-  const [loopStatus, setLoopStatus] = useState(null);
-  const [history, setHistory] = useState([]);
-  const timerRef = useRef(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function refresh() {
-      try {
-        const [nextLoopStatus, nextHistory] = await Promise.all([
-          api.getAgentLoopStatus(),
-          api.getAgentHistory({ agentId: DEFAULT_AGENT_ID, limit: 50 }),
-        ]);
-
-        if (!cancelled) {
-          setLoopStatus(nextLoopStatus);
-          setHistory(nextHistory.records || []);
-        }
-      } catch (_error) {
-        if (!cancelled) {
-          setLoopStatus(null);
-          setHistory([]);
-        }
-      }
-    }
-
-    refresh();
-    timerRef.current = setInterval(refresh, interval);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timerRef.current);
-    };
-  }, [interval]);
+  const { connected, error, refresh, snapshot } = useAgentSnapshot(interval);
 
   return useMemo(() => {
-    const activeAgent = formatAgent(loopStatus, history);
-    const txCount = history.filter((record) => record.transaction?.executePayment?.txHash).length;
+    const activeAgent = formatAgent(snapshot);
+    const txCount = snapshot.metrics?.paymentsProcessed || 0;
     const totalSpend = activeAgent.spend;
     const totalBudget = activeAgent.budget;
-    const remaining = Math.max(0, totalBudget - totalSpend);
-    const lastDecision = loopStatus?.lastDecision || null;
-    const lastTransactionHash = loopStatus?.lastTransactionHash || null;
+    const remaining = activeAgent.remaining;
+    const lastDecision = snapshot.decision || snapshot.runtime?.loop?.lastDecision || null;
+    const lastTransactionHash = snapshot.transaction?.txHash || snapshot.runtime?.loop?.lastTransactionHash || null;
+    const intents = snapshot.history?.intents || [];
+    const latestIntent = intents[0] || null;
 
     return {
       agents: [activeAgent],
-      history,
+      connected,
+      error,
+      history: snapshot.history?.runtime || [],
+      intents,
+      latestIntent,
       lastDecision,
       lastTransactionHash,
-      loopStatus,
+      loopStatus: snapshot.runtime?.loop || null,
+      refresh,
+      snapshot,
       totalSpend,
       totalBudget,
       remaining,
       txCount,
+      intentCount: snapshot.metrics?.intentsReceived || intents.length,
       activeAgent,
     };
-  }, [history, loopStatus]);
+  }, [connected, error, refresh, snapshot]);
 }
