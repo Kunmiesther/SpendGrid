@@ -1,6 +1,9 @@
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8080";
+const API_BASE =
+  process.env.REACT_APP_API_URL ||
+  window.__SPENDGRID_API__ ||
+  "https://spendgrid-2xhq.onrender.com";
 
-export { BASE_URL };
+export { API_BASE };
 
 function withQuery(path, params = {}) {
   const query = new URLSearchParams();
@@ -20,7 +23,7 @@ async function request(method, path, body) {
     headers: { "Content-Type": "application/json" },
   };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${BASE_URL}${path}`, opts);
+  const res = await fetch(`${API_BASE}${path}`, opts);
   const payload = await res.json().catch(() => null);
   if (!res.ok) {
     if (payload && path === "/payment-intents") {
@@ -39,7 +42,7 @@ export const api = {
   runAgent: (payload) => request("POST", "/agent/run", payload),
   getAgentStatus: (agentId) => request("GET", withQuery("/agent/status", { agentId })),
   getAgentSnapshot: (agentId) => request("GET", withQuery("/agent/snapshot", { agentId })),
-  getAgentEventsUrl: (agentId) => `${BASE_URL}${withQuery("/agent/events", { agentId })}`,
+  getAgentEventsUrl: (agentId) => `${API_BASE}${withQuery("/agent/events", { agentId })}`,
   getAgentHistory: (params) => request("GET", withQuery("/agent/history", params)),
   submitPaymentIntent: (payload) => request("POST", "/payment-intents", payload),
   getPaymentIntents: (params) => request("GET", withQuery("/payment-intents", params)),
