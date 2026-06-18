@@ -900,20 +900,18 @@ QIE Blockchain
 
 | Component       | Address |
 | --------------- | ------- |
-| Agent Registry  | `0x9380c2C9a75E1Cd87329308B31bf7447eAFe6970x...` |
-| SpendController | `0xDDe02252aebDdF65F4Ec373881F544107Bd62796x...` |
-| SpendVault      | `0xe2337Ea67d24c98370c42F22C94496780D8503E0x...` |
-| QUSDC           | `0x2D8a005c72C50f2961c58f91B5A6b651F045A7a0x...` |
-| QIEDex Router   | `0x08cd2e72e156D8563B4351eb4065C262A9f553Efx...` |
-| WQIE            | `0x0087904D95BEe9E5F24dc8852804b547981A9139x...` |
+| Agent Registry  | `0x9380c2C9a75E1Cd87329308B31bf7447eAFe6970` |
+| SpendController | `0xDDe02252aebDdF65F4Ec373881F544107Bd62796` |
+| SpendVault      | `0xe2337Ea67d24c98370c42F22C94496780D8503E0` |
+| QUSDC           | `0x2D8a005c72C50f2961c58f91B5A6b651F045A7a0` |
+| QIEDex Router   | `0x08cd2e72e156D8563B4351eb4065C262A9f553Ef` |
+| WQIE            | `0x0087904D95BEe9E5F24dc8852804b547981A9139` |
 
 ---
 
 # Live Deployment
 
-```
 [SpendGrid](https://spendgridlabs.vercel.app/)
-```
 
 ---
 
