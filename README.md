@@ -21,10 +21,6 @@ Policy-Enforced • QIE Pass Verified • On-Chain Settlement • Developer Frie
 
 ---
 
-## Screenshots
-
-> Replace these placeholders with dashboard screenshots.
-
 | Dashboard                   | Intent Validation                |
 | --------------------------- | -------------------------------- |
 | ![](./assets/dashboard.png) | ![](./assets/payment-intent.png) |
