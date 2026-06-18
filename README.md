@@ -929,12 +929,6 @@ https://x.com/qieblockchain
 
 ---
 
-## Builder
-
-https://x.com/kunmiii__
-
----
-
 # Open Source
 
 SpendGrid is open-source infrastructure built for the QIE ecosystem.
