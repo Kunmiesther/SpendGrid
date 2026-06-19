@@ -930,8 +930,6 @@ Status: deployed on QIE Mainnet (`qie-mainnet`, chain ID `1990`)
 
 Deployment artifact: `deployments/qie-mainnet.json`
 
-Deployed at: `2026-06-19T08:02:41.594Z`
-
 Explorer: https://mainnet.qie.digital/
 
 | Component       | Address                                      |
@@ -962,9 +960,7 @@ SpendGrid now runs against QIE Mainnet instead of Testnet. The frontend, backend
 
 # Live Deployment
 
-```
 https://your-vercel-url.vercel.app
-```
 
 ---
 
@@ -1016,7 +1012,7 @@ Blockchain Developer • Web3 Builder
 
 X:
 
-https://x.com/kunmiii__
+[@kunmiii__](https://x.com/kunmiii__)
 
 ---
 
