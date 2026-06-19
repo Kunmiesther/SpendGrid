@@ -49,6 +49,18 @@ export function normalizeDeployment(deployment) {
       wqie: normalizeAddress(
         "WQIE",
         deployment.addresses?.wqie || deployment.wqie
+      ),
+      wrappedETH: normalizeAddress(
+        "Wrapped ETH",
+        deployment.addresses?.wrappedETH || deployment.wrappedETH
+      ),
+      wrappedUSDC: normalizeAddress(
+        "Wrapped USDC",
+        deployment.addresses?.wrappedUSDC || deployment.wrappedUSDC
+      ),
+      wrappedUSDT: normalizeAddress(
+        "Wrapped USDT",
+        deployment.addresses?.wrappedUSDT || deployment.wrappedUSDT
       )
     }
   };

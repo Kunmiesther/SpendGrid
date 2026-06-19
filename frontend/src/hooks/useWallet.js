@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   clearStoredWallet,
   connectWallet,
@@ -22,10 +22,14 @@ const INITIAL_STATE = {
   walletLabel: null,
   providers: [],
   rawProvider: null,
+  provider: null,
+  signer: null,
   copied: false,
 };
 
-export function useWallet() {
+const WalletContext = createContext(null);
+
+function useWalletController() {
   const [state, setState] = useState(INITIAL_STATE);
 
   const refreshProviders = useCallback(() => {
@@ -95,6 +99,8 @@ export function useWallet() {
         walletId: result.walletId,
         walletLabel: result.walletLabel,
         rawProvider: result.rawProvider,
+        provider: result.provider,
+        signer: result.signer,
       }));
     } catch (err) {
       setState((s) => ({ ...s, loading: false, error: err.message }));
@@ -119,7 +125,7 @@ export function useWallet() {
     window.setTimeout(() => setState((s) => ({ ...s, copied: false })), 1200);
   }, [state.address]);
 
-  return {
+  return useMemo(() => ({
     ...state,
     isQieMainnet: state.chainId === QIE_MAINNET.chainId,
     connect,
@@ -128,5 +134,30 @@ export function useWallet() {
     openFaucet,
     refreshProviders,
     switchNetwork,
-  };
+  }), [
+    state,
+    connect,
+    copy,
+    disconnect,
+    refreshProviders,
+    switchNetwork,
+  ]);
+}
+
+export function WalletProvider({ children }) {
+  const wallet = useWalletController();
+  return (
+    <WalletContext.Provider value={wallet}>
+      {children}
+    </WalletContext.Provider>
+  );
+}
+
+export function useWallet() {
+  const wallet = useContext(WalletContext);
+  if (!wallet) {
+    throw new Error("useWallet must be used within WalletProvider");
+  }
+
+  return wallet;
 }

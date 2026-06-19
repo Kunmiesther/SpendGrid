@@ -10,30 +10,33 @@ import Developers from "./sections/Developers";
 import Footer from "./sections/Footer";
 import Dashboard from "./pages/Dashboard";
 import { AgentSnapshotProvider } from "./hooks/useAgentSnapshot";
+import { WalletProvider } from "./hooks/useWallet";
 
 export default function App() {
   const path = typeof window !== "undefined" ? window.location.pathname : "/";
   const isDashboard = path === "/dashboard";
 
   return (
-    <AgentSnapshotProvider interval={3000}>
-      <div className="min-h-screen bg-surface-0">
-        <Nav />
-        {isDashboard ? (
-          <Dashboard />
-        ) : (
-          <main>
-            <Hero />
-            <TrustedInfra />
-            <HowItWorks />
-            <LiveSpend />
-            <Identity />
-            <BudgetControl />
-            <Developers />
-          </main>
-        )}
-        {!isDashboard && <Footer />}
-      </div>
-    </AgentSnapshotProvider>
+    <WalletProvider>
+      <AgentSnapshotProvider interval={3000}>
+        <div className="min-h-screen bg-surface-0">
+          <Nav />
+          {isDashboard ? (
+            <Dashboard />
+          ) : (
+            <main>
+              <Hero />
+              <TrustedInfra />
+              <HowItWorks />
+              <LiveSpend />
+              <Identity />
+              <BudgetControl />
+              <Developers />
+            </main>
+          )}
+          {!isDashboard && <Footer />}
+        </div>
+      </AgentSnapshotProvider>
+    </WalletProvider>
   );
 }

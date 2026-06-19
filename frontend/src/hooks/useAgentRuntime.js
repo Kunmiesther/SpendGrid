@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ethers } from "ethers";
 import { api } from "../lib/api";
 import { loadDeployment } from "../lib/deployment";
 import { useAgentSnapshot } from "./useAgentSnapshot";
@@ -8,6 +9,7 @@ const DEFAULT_AGENT_PROMPT =
   process.env.REACT_APP_AGENT_PROMPT || "Run a bounded SpendGrid inference payment on QIE Mainnet.";
 const DEFAULT_RECEIVER = process.env.REACT_APP_AGENT_RECEIVER || "";
 const DEFAULT_INTENT_AMOUNT = process.env.REACT_APP_PAYMENT_INTENT_AMOUNT || process.env.REACT_APP_AGENT_RATE_PER_UNIT || "0.05";
+const QUSDC_DECIMALS = Number(process.env.REACT_APP_QUSDC_DECIMALS || "6");
 
 export function useAgentRuntime(interval = 4000) {
   const live = useAgentSnapshot(interval);
@@ -34,13 +36,16 @@ export function useAgentRuntime(interval = 4000) {
 
   const buildPaymentIntent = useCallback(async () => {
     const activeDeployment = deployment || (await loadDeployment());
+    const amountWei = ethers.parseUnits(DEFAULT_INTENT_AMOUNT, QUSDC_DECIMALS).toString();
     return {
       agentId,
       recipient: DEFAULT_RECEIVER || activeDeployment?.deployer || activeDeployment?.addresses?.agentRegistry,
-      amount: DEFAULT_INTENT_AMOUNT,
+      amountWei,
       metadata: {
         task: DEFAULT_AGENT_PROMPT,
-        source: "dashboard"
+        source: "dashboard",
+        amount: DEFAULT_INTENT_AMOUNT,
+        tokenDecimals: QUSDC_DECIMALS
       }
     };
   }, [agentId, deployment]);
@@ -106,6 +111,11 @@ export function useAgentRuntime(interval = 4000) {
       submitIntent,
       stopAgent,
       status: liveSnapshot.runtime || null,
+      paymentIntent: {
+        amount: DEFAULT_INTENT_AMOUNT,
+        amountWei: ethers.parseUnits(DEFAULT_INTENT_AMOUNT, QUSDC_DECIMALS).toString(),
+        tokenDecimals: QUSDC_DECIMALS
+      },
       totalSpent,
     }),
     [
