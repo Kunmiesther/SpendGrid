@@ -5,9 +5,9 @@ import { useAgentSnapshot } from "./useAgentSnapshot";
 
 const DEFAULT_AGENT_ID = process.env.REACT_APP_AGENT_ID || "1";
 const DEFAULT_AGENT_PROMPT =
-  process.env.REACT_APP_AGENT_PROMPT || "Run a bounded SpendGrid inference payment on QIE testnet.";
+  process.env.REACT_APP_AGENT_PROMPT || "Run a bounded SpendGrid inference payment on QIE Mainnet.";
 const DEFAULT_RECEIVER = process.env.REACT_APP_AGENT_RECEIVER || "";
-const DEFAULT_INTENT_AMOUNT = process.env.REACT_APP_PAYMENT_INTENT_AMOUNT || process.env.REACT_APP_AGENT_RATE_PER_UNIT || "1";
+const DEFAULT_INTENT_AMOUNT = process.env.REACT_APP_PAYMENT_INTENT_AMOUNT || process.env.REACT_APP_AGENT_RATE_PER_UNIT || "0.05";
 
 export function useAgentRuntime(interval = 4000) {
   const live = useAgentSnapshot(interval);

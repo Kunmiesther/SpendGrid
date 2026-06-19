@@ -3,7 +3,7 @@ const { makeContracts } = require("../backend/src/contracts");
 const { LiquidityEngine } = require("../backend/services/liquidityEngine");
 
 async function main() {
-  const amount = ethers.parseUnits(process.env.SIMULATE_SWAP_QUSDC || "0.1", 18);
+  const amount = ethers.parseUnits(process.env.SIMULATE_SWAP_QUSDC || "0.05", 18);
   const contracts = makeContracts();
   const owner = await contracts.signer.getAddress();
   const before = BigInt(await contracts.qusdc.balanceOf(owner));

@@ -13,7 +13,7 @@ const sdk = new SpendGridSDK({
 
 await sdk.pay({
   receiver: "0x0000000000000000000000000000000000000001",
-  amount: "1",
+  amount: "0.05",
   mode: "instant",
   metadata: { task: "settle model inference", source: "my-app" }
 });
@@ -22,7 +22,7 @@ const binding = attachSpendGridPay({
   element: "#pay",
   sdk,
   receiver: "0x0000000000000000000000000000000000000001",
-  amount: "1",
+  amount: "0.05",
   onSuccess: (receipt) => console.log(receipt),
   onError: (error) => console.error(error)
 });

@@ -1,7 +1,7 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("dotenv").config();
 
-const QIE_RPC_URL = process.env.QIE_RPC_URL || "http://127.0.0.1:8545";
+const QIE_MAINNET_RPC_URL = process.env.QIE_RPC_URL || "https://rpc1mainnet.qie.digital/";
 const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY || "";
 
 const accounts = DEPLOYER_PRIVATE_KEY ? [DEPLOYER_PRIVATE_KEY] : [];
@@ -18,11 +18,11 @@ module.exports = {
   },
   networks: {
     hardhat: {
-      chainId: 1983
+      chainId: 1990
     },
-    qieTestnet: {
-      url: QIE_RPC_URL,
-      chainId: 1983,
+    qieMainnet: {
+      url: QIE_MAINNET_RPC_URL,
+      chainId: 1990,
       accounts
     }
   }

@@ -1,12 +1,12 @@
 {
   "name": "spendgrid-protocol",
   "version": "1.0.0",
-  "description": "SPENDGRID Protocol - autonomous AI agent payment infrastructure for the QIE testnet.",
+  "description": "SPENDGRID Protocol - autonomous AI agent payment infrastructure for QIE Mainnet.",
   "private": true,
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "deploy:qie": "hardhat run scripts/deploy.js --network qieTestnet",
+    "deploy:qie": "hardhat run scripts/deploy.js --network qieMainnet",
     "backend": "node backend/server.js"
   },
   "dependencies": {

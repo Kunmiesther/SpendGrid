@@ -10,10 +10,10 @@ const ERC20_ABI = [
   "function decimals() external view returns (uint8)"
 ];
 
-async function assertQieTestnet(provider) {
+async function assertQieMainnet(provider) {
   const network = await provider.getNetwork();
   if (network.chainId !== BigInt(CHAIN_ID)) {
-    throw new Error(`Expected QIE Testnet chain ID ${CHAIN_ID}, received ${network.chainId.toString()}`);
+    throw new Error(`Expected QIE Mainnet chain ID ${CHAIN_ID}, received ${network.chainId.toString()}`);
   }
 }
 
@@ -79,7 +79,7 @@ function makeStreamVaultAdapter(vault) {
 
 module.exports = {
   ERC20_ABI,
-  assertQieTestnet,
+  assertQieMainnet,
   makeContracts,
   makeStreamVaultAdapter
 };

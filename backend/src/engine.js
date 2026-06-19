@@ -1,6 +1,6 @@
 const { ethers } = require("ethers");
 const { decideAction, runModel } = require("./aiAgent");
-const { assertQieTestnet, makeStreamVaultAdapter } = require("./contracts");
+const { assertQieMainnet, makeStreamVaultAdapter } = require("./contracts");
 const { CHAIN_ID, NETWORK_NAME } = require("./deployment");
 const { isMockQusdcMode } = require("./qusdcMode");
 const { bigintJson, createId, findEvent, hashPrompt, nowIso, toPositiveUint } = require("./utils");
@@ -71,7 +71,7 @@ class AutonomousAgentEngine {
   }
 
   async start() {
-    await assertQieTestnet(this.contracts.provider);
+    await assertQieMainnet(this.contracts.provider);
     const signerAddress = await this.contracts.signer.getAddress();
 
     this.ready = true;
@@ -423,7 +423,7 @@ class AutonomousAgentEngine {
       ? onChainDailyLimit
       : this.defaultDailyLimit;
     const onChainRemaining = enforceableLimit > spentToday ? enforceableLimit - spentToday : 0n;
-    const testnetCap = BigInt(CHAIN_ID) === 1983n ? this.testModeLimit : this.defaultDailyLimit;
+    const demoCap = this.testModeLimit;
     const balanceConstraint = isMockQusdcMode()
       ? (BigInt(balance) >= BigInt(requestedAmount) ? BigInt(requestedAmount) : BigInt(balance))
       : BigInt(balance);
@@ -431,7 +431,7 @@ class AutonomousAgentEngine {
       { name: "requestedAmount", value: BigInt(requestedAmount) },
       { name: "defaultDailyLimit", value: this.defaultDailyLimit },
       { name: "qusdcBalance", value: balanceConstraint },
-      { name: "testModeLimit", value: testnetCap },
+      { name: "demoLimit", value: demoCap },
       { name: "remainingWei", value: onChainRemaining }
     ];
     const limitingConstraint = minimumConstraint(constraints);
@@ -459,7 +459,7 @@ class AutonomousAgentEngine {
         defaultDailyLimit: this.defaultDailyLimit,
         qusdcBalance: balance,
         qusdcMode: isMockQusdcMode() ? "mock" : "default",
-        testModeLimit: testnetCap,
+        demoLimit: demoCap,
         onChainRemaining,
         limitingConstraint: limitingConstraint.name
       });

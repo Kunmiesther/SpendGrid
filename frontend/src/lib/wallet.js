@@ -1,21 +1,21 @@
 import { ethers } from "ethers";
 import EthereumProvider from "@walletconnect/ethereum-provider";
 
-export const QIE_TESTNET = {
-  chainId: 1983,
-  hexChainId: "0x7bf",
-  chainName: "QIE Testnet",
-  rpcUrls: ["https://rpc1testnet.qie.digital/"],
+export const QIE_MAINNET = {
+  chainId: 1990,
+  hexChainId: "0x7c6",
+  chainName: "QIE Mainnet",
+  rpcUrls: ["https://rpc1mainnet.qie.digital/"],
   nativeCurrency: {
     name: "QIE",
     symbol: "QIE",
     decimals: 18,
   },
-  blockExplorerUrls: [],
+  blockExplorerUrls: ["https://mainnet.qie.digital/"],
 };
 
 const WALLET_STORAGE_KEY = "spendgrid.wallet";
-const WALLETCONNECT_PROJECT_ID = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID || "SPENDGRID_QIE_TESTNET";
+const WALLETCONNECT_PROJECT_ID = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID || "SPENDGRID_QIE_MAINNET";
 const WALLETCONNECT_ID = "walletconnect";
 
 const WALLET_PRIORITIES = {
@@ -87,7 +87,7 @@ export function getWalletProviders() {
         id: type.startsWith("injected-") ? type : `injected-${type}`,
         type,
         label: providerLabel(type, index),
-        subtitle: type === "qie" ? "Recommended for QIE Network" : null,
+        subtitle: type === "qie" ? "Recommended for QIE Mainnet" : null,
         provider,
         connector: "injected",
         priority: WALLET_PRIORITIES[type] ?? 10 + index,
@@ -136,17 +136,17 @@ export function getProviderById(walletId) {
 }
 
 async function createWalletConnectProvider() {
-  if (!WALLETCONNECT_PROJECT_ID || WALLETCONNECT_PROJECT_ID === "SPENDGRID_QIE_TESTNET") {
+  if (!WALLETCONNECT_PROJECT_ID || WALLETCONNECT_PROJECT_ID === "SPENDGRID_QIE_MAINNET") {
     throw new Error("REACT_APP_WALLETCONNECT_PROJECT_ID is required for WalletConnect.");
   }
 
   const provider = await EthereumProvider.init({
     projectId: WALLETCONNECT_PROJECT_ID,
-    chains: [QIE_TESTNET.chainId],
-    optionalChains: [QIE_TESTNET.chainId],
+    chains: [QIE_MAINNET.chainId],
+    optionalChains: [QIE_MAINNET.chainId],
     showQrModal: true,
     rpcMap: {
-      [QIE_TESTNET.chainId]: QIE_TESTNET.rpcUrls[0],
+      [QIE_MAINNET.chainId]: QIE_MAINNET.rpcUrls[0],
     },
     metadata: {
       name: "SpendGrid",
@@ -197,7 +197,7 @@ export async function connectWallet(walletId) {
   };
 }
 
-export async function switchToQieTestnet(rawProvider) {
+export async function switchToQieMainnet(rawProvider) {
   if (!rawProvider) {
     throw new Error("No wallet provider selected.");
   }
@@ -205,7 +205,7 @@ export async function switchToQieTestnet(rawProvider) {
   try {
     await rawProvider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: QIE_TESTNET.hexChainId }],
+      params: [{ chainId: QIE_MAINNET.hexChainId }],
     });
   } catch (error) {
     if (error.code !== 4902) {
@@ -216,18 +216,18 @@ export async function switchToQieTestnet(rawProvider) {
       method: "wallet_addEthereumChain",
       params: [
         {
-          chainId: QIE_TESTNET.hexChainId,
-          chainName: QIE_TESTNET.chainName,
-          rpcUrls: QIE_TESTNET.rpcUrls,
-          nativeCurrency: QIE_TESTNET.nativeCurrency,
-          blockExplorerUrls: QIE_TESTNET.blockExplorerUrls,
+          chainId: QIE_MAINNET.hexChainId,
+          chainName: QIE_MAINNET.chainName,
+          rpcUrls: QIE_MAINNET.rpcUrls,
+          nativeCurrency: QIE_MAINNET.nativeCurrency,
+          blockExplorerUrls: QIE_MAINNET.blockExplorerUrls,
         },
       ],
     });
 
     await rawProvider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: QIE_TESTNET.hexChainId }],
+      params: [{ chainId: QIE_MAINNET.hexChainId }],
     });
   }
 }
@@ -251,7 +251,7 @@ export async function copyAddress(address) {
 }
 
 export function openFaucet() {
-  window.open("https://qie.digital/faucet", "_blank", "noopener,noreferrer");
+  window.open("https://mainnet.qie.digital/", "_blank", "noopener,noreferrer");
 }
 
 export async function getBalance(provider, address) {

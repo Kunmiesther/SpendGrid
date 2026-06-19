@@ -5,7 +5,7 @@ import { createSpendGridAdapter } from "./adapter.js";
  *
  * @example
  * const pay = initSpendGrid(window.ethereum);
- * await pay({ receiver, amount: "1" });
+ * await pay({ receiver, amount: "0.05" });
  */
 export function initSpendGrid(provider, options = {}) {
   const resolvedProvider = provider || options.provider || (typeof globalThis !== "undefined" ? globalThis.ethereum : null);

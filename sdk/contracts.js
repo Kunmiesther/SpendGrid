@@ -1,20 +1,17 @@
 import { ethers } from "ethers";
 
-export const QIE_TESTNET_CHAIN_ID = 1983;
-export const QIE_TESTNET_NETWORK = "qie-testnet";
+export const QIE_MAINNET_CHAIN_ID = 1990;
+export const QIE_MAINNET_NETWORK = "qie-mainnet";
 export const DEFAULT_TOKEN_DECIMALS = 18;
 
 export const DEFAULT_ADDRESSES = Object.freeze({
-  agentRegistry: "0x9380c2C9a75E1Cd87329308B31bf7447eAFe6970",
-  spendController: "0xDDe02252aebDdF65F4Ec373881F544107Bd62796",
-  streamVault: "0xe2337Ea67d24c98370c42F22C94496780D8503E0",
-  qusdc: "0x2D8a005c72C50f2961c58f91B5A6b651F045A7a0"
+  qusdc: "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5"
 });
 
 export const NETWORKS = Object.freeze({
-  qieTestnet: Object.freeze({
-    name: QIE_TESTNET_NETWORK,
-    chainId: QIE_TESTNET_CHAIN_ID,
+  qieMainnet: Object.freeze({
+    name: QIE_MAINNET_NETWORK,
+    chainId: QIE_MAINNET_CHAIN_ID,
     addresses: DEFAULT_ADDRESSES
   })
 });
@@ -52,7 +49,7 @@ export const ERC20_ABI = Object.freeze([
   "function transfer(address to,uint256 amount) returns (bool)"
 ]);
 
-export function resolveNetworkConfig(network = "qieTestnet") {
+export function resolveNetworkConfig(network = "qieMainnet") {
   if (typeof network === "string") {
     const configured = NETWORKS[network];
     if (!configured) {
@@ -66,8 +63,8 @@ export function resolveNetworkConfig(network = "qieTestnet") {
   }
 
   return {
-    name: network.name || QIE_TESTNET_NETWORK,
-    chainId: Number(network.chainId || QIE_TESTNET_CHAIN_ID),
+    name: network.name || QIE_MAINNET_NETWORK,
+    chainId: Number(network.chainId || QIE_MAINNET_CHAIN_ID),
     addresses: {
       ...DEFAULT_ADDRESSES,
       ...(network.addresses || {})
@@ -77,29 +74,32 @@ export function resolveNetworkConfig(network = "qieTestnet") {
 
 export function normalizeDeployment(deployment = {}) {
   const addresses = deployment.addresses || {};
-
-  return {
-    network: deployment.network || QIE_TESTNET_NETWORK,
-    chainId: Number(deployment.chainId || QIE_TESTNET_CHAIN_ID),
+  const normalized = {
+    network: deployment.network || QIE_MAINNET_NETWORK,
+    chainId: Number(deployment.chainId || QIE_MAINNET_CHAIN_ID),
     addresses: {
-      agentRegistry: normalizeAddress(
-        "AgentRegistry",
-        addresses.agentRegistry || deployment.agentRegistry || deployment.registry
-      ),
-      spendController: normalizeAddress(
-        "SpendController",
-        addresses.spendController || deployment.spendController || deployment.controller
-      ),
-      streamVault: normalizeAddress(
-        "StreamVault",
-        addresses.streamVault || deployment.streamVault || deployment.vault
-      ),
       qusdc: normalizeAddress(
         "QUSDC",
         addresses.qusdc || addresses.mockQUSDC || addresses.mockQusdc || addresses.mockQIEStable || deployment.qieStablecoin || deployment.stable || deployment.qusdc
       )
     }
   };
+
+  const agentRegistry = addresses.agentRegistry || deployment.agentRegistry || deployment.registry;
+  const spendController = addresses.spendController || deployment.spendController || deployment.controller;
+  const streamVault = addresses.streamVault || deployment.streamVault || deployment.vault;
+
+  if (agentRegistry) {
+    normalized.addresses.agentRegistry = normalizeAddress("AgentRegistry", agentRegistry);
+  }
+  if (spendController) {
+    normalized.addresses.spendController = normalizeAddress("SpendController", spendController);
+  }
+  if (streamVault) {
+    normalized.addresses.streamVault = normalizeAddress("StreamVault", streamVault);
+  }
+
+  return normalized;
 }
 
 export function normalizeAddress(label, value) {

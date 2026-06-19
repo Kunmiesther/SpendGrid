@@ -285,7 +285,7 @@ async function buildAgentSnapshot(runtime, requestedAgentId) {
     const ledgerSpentToday = BigInt(ledger.dailyPaymentSpend(agentId));
     const spentToday = maxBigInt(onChainSpentToday, runtimeSpentToday, ledgerSpentToday);
     const defaultDailyLimit = runtime.agentRuntime.defaultDailyLimit;
-    const testModeLimit = BigInt(CHAIN_ID) === 1983n ? runtime.agentRuntime.testModeLimit : defaultDailyLimit;
+    const demoLimit = runtime.agentRuntime.testModeLimit;
     const enforceableLimit = onChainDailyLimit > 0n && onChainDailyLimit < defaultDailyLimit
       ? onChainDailyLimit
       : defaultDailyLimit;
@@ -294,7 +294,7 @@ async function buildAgentSnapshot(runtime, requestedAgentId) {
       { name: "enforceableLimit", value: enforceableLimit },
       { name: "remainingWei", value: remainingWei },
       { name: "qusdcBalance", value: BigInt(qusdcBalance) },
-      { name: "testModeLimit", value: testModeLimit },
+      { name: "demoLimit", value: demoLimit },
       { name: "defaultDailyLimit", value: defaultDailyLimit }
     ];
     const limitingConstraint = minPositiveConstraint(constraints);
@@ -352,7 +352,7 @@ async function buildAgentSnapshot(runtime, requestedAgentId) {
       safeSpendLimit: formatUnits(limitingConstraint.value, decimals),
       limitingConstraint: limitingConstraint.name,
       defaultDailyLimitWei: defaultDailyLimit.toString(),
-      testModeLimitWei: testModeLimit.toString(),
+      demoLimitWei: demoLimit.toString(),
       paused: Boolean(budget.paused),
       vaultWhitelisted: Boolean(vaultWhitelisted),
       constraints: Object.fromEntries(constraints.map((constraint) => [constraint.name, constraint.value.toString()]))
@@ -427,6 +427,7 @@ function logStartupConfig() {
     TEST_MODE_LIMIT: process.env.TEST_MODE_LIMIT || process.env.TEST_MODE_LIMIT_QIE || "0.05",
     TEST_MODE_LIMIT_WEI: process.env.TEST_MODE_LIMIT_WEI || null,
     parsedTestModeLimit,
+    PAYMENT_INTENT_AMOUNT: process.env.PAYMENT_INTENT_AMOUNT || process.env.DEFAULT_PAYMENT_INTENT_AMOUNT || "0.05",
     QIE_STABLECOIN_ADDRESS: process.env.QIE_STABLECOIN_ADDRESS || null,
     QUSDC_MODE: process.env.QUSDC_MODE || null,
     QUSDC_ADDRESS: process.env.QUSDC_ADDRESS || null,

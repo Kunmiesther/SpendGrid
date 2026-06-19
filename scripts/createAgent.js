@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const hre = require("hardhat");
 
-const CONTROLLER_ADDRESS = "0xDDe02252aebDdF65F4Ec373881F544107Bd62796";
+const CONTROLLER_ADDRESS = "";
 const AGENT_ID = 1;
 const DEFAULT_QIE_PASS_ID = "spendgrid-bootstrap-agent-1";
 
@@ -35,7 +35,7 @@ function requireAddress(label, value) {
 }
 
 function deploymentPath() {
-  return path.join(__dirname, "..", process.env.DEPLOYMENT_PATH || "deployments/qie-testnet.json");
+  return path.join(__dirname, "..", process.env.DEPLOYMENT_PATH || "deployments/qie-mainnet.json");
 }
 
 function loadDeployment() {

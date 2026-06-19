@@ -22,7 +22,7 @@ export default function Hero() {
           custom={0}
           className="mb-10"
         >
-          <span className="tag">v1.0 — NOW ON QIE TESTNET</span>
+          <span className="tag">v1.0 - NOW ON QIE MAINNET</span>
         </motion.div>
 
         {/* Headline */}

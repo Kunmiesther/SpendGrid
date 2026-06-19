@@ -21,7 +21,7 @@ const LINKS = [
   {
     category: "Ecosystem",
     items: [
-      { label: "QIE Explorer", href: "https://testnet.qie.digital/", external: true },
+      { label: "QIE Explorer", href: "https://mainnet.qie.digital/", external: true },
       { label: "QIE Pass", href: "https://qiepass.qie.digital/", external: true },
       { label: "QIE Blockchain", href: "https://www.qie.digital/", external: true },
     ],

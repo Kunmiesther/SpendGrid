@@ -3,8 +3,8 @@ const os = require("os");
 const path = require("path");
 const hre = require("hardhat");
 
-const DEPLOYMENT_FILE = path.join(__dirname, "..", "deployments", "qie-testnet.json");
-const FRONTEND_DEPLOYMENT_FILE = path.join(__dirname, "..", "frontend", "public", "deployments", "qie-testnet.json");
+const DEPLOYMENT_FILE = path.join(__dirname, "..", "deployments", "qie-mainnet.json");
+const FRONTEND_DEPLOYMENT_FILE = path.join(__dirname, "..", "frontend", "public", "deployments", "qie-mainnet.json");
 
 function upsertEnvFile(values) {
   if (process.env.SPENDGRID_UPDATE_ENV === "false") {

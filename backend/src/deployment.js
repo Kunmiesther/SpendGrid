@@ -6,11 +6,11 @@ const { isMockQusdcMode } = require("./qusdcMode");
 
 loadEnv();
 
-const CHAIN_ID = 1983;
-const NETWORK_NAME = "qie-testnet";
+const CHAIN_ID = 1990;
+const NETWORK_NAME = "qie-mainnet";
 const PROJECT_ROOT = path.join(__dirname, "..", "..");
-const DEPLOYMENT_PUBLIC_PATH = "/deployments/qie-testnet.json";
-const DEPLOYMENT_FILE = path.join(PROJECT_ROOT, "deployments", "qie-testnet.json");
+const DEPLOYMENT_PUBLIC_PATH = "/deployments/qie-mainnet.json";
+const DEPLOYMENT_FILE = path.join(PROJECT_ROOT, process.env.DEPLOYMENT_PATH || "deployments/qie-mainnet.json");
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
 
@@ -51,7 +51,7 @@ function loadDeployment() {
 
   const deployment = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE, "utf8"));
   if (Number(deployment.chainId) !== CHAIN_ID) {
-    throw new Error(`Deployment artifact must target QIE Testnet chain ID ${CHAIN_ID}`);
+    throw new Error(`Deployment artifact must target QIE Mainnet chain ID ${CHAIN_ID}`);
   }
 
   return {

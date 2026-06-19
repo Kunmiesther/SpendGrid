@@ -3,9 +3,17 @@ const os = require("os");
 const path = require("path");
 const { ethers, network } = require("hardhat");
 
-const QIE_CHAIN_ID = 1983n;
-const DEPLOYMENT_NETWORK = "qie-testnet";
+const QIE_CHAIN_ID = 1990n;
+const DEPLOYMENT_NETWORK = "qie-mainnet";
 const DEPLOYMENT_FILE = `deployments/${DEPLOYMENT_NETWORK}.json`;
+const MAINNET_QUSDC = "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5";
+const MAINNET_QIEDEX_ROUTER = "0x08cd2e72e156D8563B4351eb4065C262A9f553Ef";
+const MAINNET_QIEDEX_FACTORY = "0x8E23128a5511223bE6c0d64106e2D4508C08398C";
+const MAINNET_WQIE = "0x0087904D95BEe9E5F24dc8852804b547981A9139";
+const WRAPPED_ETH = "0x95322ccB3fb8dDefD210805EE18662762a0bc4A2";
+const WRAPPED_BNB = "0x9e02ba5dE6d26D5Ca5688Ed3999C6bcF4F3e966E";
+const WRAPPED_USDC = "0x0e93FAcc0a2cfD418403f3AD3EEfB5C8b2dfAec7";
+const WRAPPED_USDT = "0xCB7bBC584475dce754a918ccD92FF6E0211f3CEE";
 
 function isMockQusdcMode() {
   return String(process.env.QUSDC_MODE || "").trim().toLowerCase() === "mock";
@@ -19,6 +27,14 @@ function assertAddress(label, value) {
 
 function sameAddress(left, right) {
   return left.toLowerCase() === right.toLowerCase();
+}
+
+async function assertContract(label, address) {
+  assertAddress(label, address);
+  const code = await ethers.provider.getCode(address);
+  if (!code || code === "0x") {
+    throw new Error(`${label} has no contract code at ${address}`);
+  }
 }
 
 async function deployContract(contractName, args = []) {
@@ -92,7 +108,7 @@ async function main() {
   const chain = await ethers.provider.getNetwork();
 
   if (!deployer) {
-    throw new Error("No deployer signer available. Set DEPLOYER_PRIVATE_KEY in .env before deploying to QIE Testnet.");
+    throw new Error("No deployer signer available. Set DEPLOYER_PRIVATE_KEY in .env before deploying to QIE Mainnet.");
   }
 
   if (chain.chainId !== QIE_CHAIN_ID) {
@@ -106,11 +122,17 @@ async function main() {
   console.log(`Deployer: ${deployerAddress}`);
 
   const useMockQusdc = isMockQusdcMode();
-  const paymentTokenContract = useMockQusdc ? "MockQUSDC" : "MockQIEStable";
-  const stable = await deployContract(paymentTokenContract);
-  const stableAddress = await stable.getAddress();
-  assertAddress(paymentTokenContract, stableAddress);
-  console.log(`${paymentTokenContract} deployed at: ${stableAddress}`);
+  let stableAddress = process.env.QUSDC_ADDRESS || process.env.QIE_STABLECOIN_ADDRESS || MAINNET_QUSDC;
+  if (useMockQusdc) {
+    const stable = await deployContract("MockQUSDC");
+    stableAddress = await stable.getAddress();
+    assertAddress("MockQUSDC", stableAddress);
+    console.log(`MockQUSDC deployed at: ${stableAddress}`);
+  } else {
+    stableAddress = ethers.getAddress(stableAddress);
+    await assertContract("QUSDC", stableAddress);
+    console.log(`Using QUSDC at: ${stableAddress}`);
+  }
 
   const registry = await deployContract("AgentRegistry");
   const registryAddress = await registry.getAddress();
@@ -153,12 +175,18 @@ async function main() {
     controller: controllerAddress,
     vault: vaultAddress,
     addresses: {
-      mockQIEStable: useMockQusdc ? undefined : stableAddress,
       mockQUSDC: useMockQusdc ? stableAddress : undefined,
       qusdc: stableAddress,
       agentRegistry: registryAddress,
       spendController: controllerAddress,
-      streamVault: vaultAddress
+      streamVault: vaultAddress,
+      qiedexFactory: MAINNET_QIEDEX_FACTORY,
+      qiedexRouter: MAINNET_QIEDEX_ROUTER,
+      wqie: MAINNET_WQIE,
+      wrappedETH: WRAPPED_ETH,
+      wrappedBNB: WRAPPED_BNB,
+      wrappedUSDC: WRAPPED_USDC,
+      wrappedUSDT: WRAPPED_USDT
     },
     network: DEPLOYMENT_NETWORK,
     chainId: Number(chain.chainId),
@@ -168,7 +196,14 @@ async function main() {
     qieStablecoin: stableAddress,
     agentRegistry: registryAddress,
     spendController: controllerAddress,
-    streamVault: vaultAddress
+    streamVault: vaultAddress,
+    qiedexFactory: MAINNET_QIEDEX_FACTORY,
+    qiedexRouter: MAINNET_QIEDEX_ROUTER,
+    wqie: MAINNET_WQIE,
+    wrappedETH: WRAPPED_ETH,
+    wrappedBNB: WRAPPED_BNB,
+    wrappedUSDC: WRAPPED_USDC,
+    wrappedUSDT: WRAPPED_USDT
   };
 
   const deploymentPath = writeDeploymentFile(deployment);
@@ -179,6 +214,13 @@ async function main() {
     AGENT_REGISTRY_ADDRESS: registryAddress,
     SPEND_CONTROLLER_ADDRESS: controllerAddress,
     STREAM_VAULT_ADDRESS: vaultAddress,
+    QIEDEX_FACTORY_ADDRESS: MAINNET_QIEDEX_FACTORY,
+    QIEDEX_ROUTER_ADDRESS: MAINNET_QIEDEX_ROUTER,
+    WQIE_ADDRESS: MAINNET_WQIE,
+    WRAPPED_ETH_ADDRESS: WRAPPED_ETH,
+    WRAPPED_BNB_ADDRESS: WRAPPED_BNB,
+    WRAPPED_USDC_ADDRESS: WRAPPED_USDC,
+    WRAPPED_USDT_ADDRESS: WRAPPED_USDT,
     DEPLOYMENT_PATH: DEPLOYMENT_FILE
   };
   if (useMockQusdc) {

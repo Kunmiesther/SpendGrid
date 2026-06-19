@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useInView } from "../hooks/useInView";
 import { useLiveSpend } from "../hooks/useLiveSpend";
 
-const QIE_TX_EXPLORER_URL = "https://testnet.qie.digital/tx/";
+const QIE_TX_EXPLORER_URL = "https://mainnet.qie.digital/tx/";
 
 function SpendStat({ label, value, mono = true, accent = false }) {
   return (

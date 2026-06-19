@@ -4,8 +4,8 @@ const { makeContracts } = require("../backend/src/contracts");
 const { LiquidityEngine } = require("../backend/services/liquidityEngine");
 const { AutonomousAgentEngine } = require("../backend/src/engine");
 
-const MIN_QUSDC_BALANCE = hre.ethers.parseUnits("0.1", 18);
-const TEST_MODE_LIMIT = 50_000_000_000_000_000n;
+const MIN_QUSDC_BALANCE = hre.ethers.parseUnits("0.05", 18);
+const DEMO_PAYMENT_AMOUNT = hre.ethers.parseUnits(process.env.DEMO_PAYMENT_QUSDC || "0.05", 18);
 
 async function waitForSuccess(tx, label) {
   console.log(`${label} tx submitted: ${tx.hash}`);
@@ -38,7 +38,7 @@ async function main() {
   console.log(`Backend signer: ${owner}`);
   console.log(`QUSDC balance: ${hre.ethers.formatUnits(balance, 18)} QUSDC`);
   if (balance < MIN_QUSDC_BALANCE) {
-    throw new Error(`Backend signer must have at least 0.1 QUSDC; current balance is ${hre.ethers.formatUnits(balance, 18)} QUSDC`);
+    throw new Error(`Backend signer must have at least 0.05 QUSDC; current balance is ${hre.ethers.formatUnits(balance, 18)} QUSDC`);
   }
 
   const approval = await ensureAllowance(contracts, owner, balance);
@@ -60,9 +60,9 @@ async function main() {
   const result = await engine.runTask({
     action: "createStream",
     agentId: process.env.AGENT_ID || "1",
-    prompt: "Validate SpendGrid testnet execution with 0.05 QUSDC limit.",
+    prompt: "Validate SpendGrid mainnet execution with 0.05 QUSDC limit.",
     receiver: process.env.AGENT_RECEIVER || owner,
-    ratePerUnit: TEST_MODE_LIMIT.toString(),
+    ratePerUnit: DEMO_PAYMENT_AMOUNT.toString(),
     units: "1",
     closeAfterRun: true
   });

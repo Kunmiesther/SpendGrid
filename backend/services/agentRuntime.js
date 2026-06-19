@@ -10,7 +10,7 @@ const WEI_PER_QIE = 10n ** 18n;
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
 const ZERO_BYTES32 = /^0x0{64}$/i;
 const DEFAULT_TEST_MODE_LIMIT_QIE = "0.05";
-const TESTNET_CHAIN_ID = 1983n;
+const DEFAULT_PAYMENT_INTENT_AMOUNT_QUSDC = "0.05";
 
 function nowIso() {
   return new Date().toISOString();
@@ -230,6 +230,10 @@ class AgentRuntime {
       "DEFAULT_DAILY_LIMIT"
     );
     this.testModeLimit = readTestModeLimitWei(options);
+    this.defaultPaymentIntentAmount = options.defaultPaymentIntentAmount
+      || process.env.PAYMENT_INTENT_AMOUNT
+      || process.env.DEFAULT_PAYMENT_INTENT_AMOUNT
+      || DEFAULT_PAYMENT_INTENT_AMOUNT_QUSDC;
     this.defaultAgentId = options.defaultAgentId || process.env.AGENT_ID || "1";
     this.defaultReceiver = options.defaultReceiver || process.env.AGENT_RECEIVER;
     this.defaultStreamId = options.defaultStreamId || process.env.AGENT_STREAM_ID;
@@ -599,7 +603,12 @@ class AgentRuntime {
     try {
       amountWei = input.amountWei !== undefined && input.amountWei !== null && input.amountWei !== ""
         ? toPositiveBigInt(input.amountWei, "amountWei")
-        : parseQieToWei(input.amount, "amount");
+        : parseQieToWei(
+          input.amount === undefined || input.amount === null || input.amount === ""
+            ? this.defaultPaymentIntentAmount
+            : input.amount,
+          "amount"
+        );
     } catch (error) {
       throw makeValidationError("INVALID_AMOUNT", error.message, {
         amount: input.amount || null,
@@ -1081,19 +1090,19 @@ class AgentRuntime {
       ? onChainDailyLimit
       : this.defaultDailyLimit;
     const remainingWei = enforceableLimit > combinedSpent ? enforceableLimit - combinedSpent : 0n;
-    const testnetCapWei = BigInt(CHAIN_ID) === TESTNET_CHAIN_ID ? this.testModeLimit : this.defaultDailyLimit;
+    const demoLimitWei = this.testModeLimit;
     const constraints = [
       { name: "enforceableLimit", value: enforceableLimit },
       { name: "remainingWei", value: remainingWei },
       { name: "qusdcBalance", value: qusdcBalance },
-      { name: "testModeLimit", value: testnetCapWei },
+      { name: "demoLimit", value: demoLimitWei },
       { name: "defaultDailyLimit", value: this.defaultDailyLimit }
     ];
     const spendLimit = spendLimitFromConstraints(constraints, ["qusdcBalance", "enforceableLimit", "remainingWei"]);
     const safeSpendLimitWei = spendLimit.safeSpendLimitWei;
     const budgetDebug = {
       defaultDailyLimit: this.defaultDailyLimit.toString(),
-      testModeLimit: testnetCapWei.toString(),
+      demoLimit: demoLimitWei.toString(),
       onChainDailyLimit: onChainDailyLimit.toString(),
       onChainSpentToday: onChainSpent.toString(),
       localSpentToday: localSpent.toString(),

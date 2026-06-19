@@ -19,7 +19,7 @@ export default function Nav() {
     copied,
     disconnect,
     error,
-    isQieTestnet,
+    isQieMainnet,
     loading,
     openFaucet,
     providers,
@@ -116,7 +116,7 @@ export default function Nav() {
                     </div>
                   )}
 
-                  {connected && !isQieTestnet && (
+                  {connected && !isQieMainnet && (
                     <button
                       onClick={() => switchNetwork().catch(() => {})}
                       className="w-full text-left px-4 py-3 border-b border-wire text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
@@ -137,7 +137,7 @@ export default function Nav() {
                         onClick={openFaucet}
                         className="w-full text-left px-4 py-3 border-b border-wire text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
                       >
-                        Claim Faucet
+                        QIE Explorer
                       </button>
                       <button
                         onClick={() => {

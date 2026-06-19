@@ -1,6 +1,6 @@
 import type { BrowserProvider, JsonRpcProvider, Provider, Signer } from "ethers";
 
-export type SpendGridNetworkName = "qieTestnet";
+export type SpendGridNetworkName = "qieMainnet";
 export type SpendGridPayMode = "instant" | "stream";
 export type SpendGridStatus = "executed" | "rejected" | "failed" | "confirmed";
 

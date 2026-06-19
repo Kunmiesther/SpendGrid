@@ -6,9 +6,9 @@ import {
   getStoredWalletId,
   getWalletProviders,
   openFaucet,
-  QIE_TESTNET,
+  QIE_MAINNET,
   shortenAddress,
-  switchToQieTestnet,
+  switchToQieMainnet,
 } from "../lib/wallet";
 
 const INITIAL_STATE = {
@@ -105,8 +105,8 @@ export function useWallet() {
   const switchNetwork = useCallback(async () => {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
-      await switchToQieTestnet(state.rawProvider);
-      setState((s) => ({ ...s, chainId: QIE_TESTNET.chainId, loading: false }));
+      await switchToQieMainnet(state.rawProvider);
+      setState((s) => ({ ...s, chainId: QIE_MAINNET.chainId, loading: false }));
     } catch (err) {
       setState((s) => ({ ...s, loading: false, error: err.message }));
       throw err;
@@ -121,7 +121,7 @@ export function useWallet() {
 
   return {
     ...state,
-    isQieTestnet: state.chainId === QIE_TESTNET.chainId,
+    isQieMainnet: state.chainId === QIE_MAINNET.chainId,
     connect,
     copy,
     disconnect,

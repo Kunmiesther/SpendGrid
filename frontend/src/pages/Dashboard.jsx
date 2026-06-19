@@ -2,7 +2,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { useAgentSnapshot } from "../hooks/useAgentSnapshot";
 
-const QIE_TX_EXPLORER_URL = "https://testnet.qie.digital/tx/";
+const QIE_TX_EXPLORER_URL = "https://mainnet.qie.digital/tx/";
 
 function Panel({ children, className = "" }) {
   return (

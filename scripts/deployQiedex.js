@@ -3,14 +3,35 @@ const os = require("os");
 const path = require("path");
 const hre = require("hardhat");
 
-const DEPLOYMENT_NETWORK = "qie-testnet";
+const QIE_CHAIN_ID = 1990n;
+const DEPLOYMENT_NETWORK = "qie-mainnet";
 const DEPLOYMENT_FILE = `deployments/${DEPLOYMENT_NETWORK}.json`;
-const DEFAULT_WQIE_LIQUIDITY = "1";
-const DEFAULT_QUSDC_LIQUIDITY = "1000";
-const GAS_HEADROOM_WEI = hre.ethers.parseEther("0.05");
+const FRONTEND_DEPLOYMENT_FILE = path.join("frontend", "public", "deployments", `${DEPLOYMENT_NETWORK}.json`);
+
+const MAINNET_QUSDC = "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5";
+const MAINNET_QIEDEX_ROUTER = "0x08cd2e72e156D8563B4351eb4065C262A9f553Ef";
+const MAINNET_QIEDEX_FACTORY = "0x8E23128a5511223bE6c0d64106e2D4508C08398C";
+const MAINNET_WQIE = "0x0087904D95BEe9E5F24dc8852804b547981A9139";
+const WRAPPED_ETH = "0x95322ccB3fb8dDefD210805EE18662762a0bc4A2";
+const WRAPPED_BNB = "0x9e02ba5dE6d26D5Ca5688Ed3999C6bcF4F3e966E";
+const WRAPPED_USDC = "0x0e93FAcc0a2cfD418403f3AD3EEfB5C8b2dfAec7";
+const WRAPPED_USDT = "0xCB7bBC584475dce754a918ccD92FF6E0211f3CEE";
+
+const ROUTER_ABI = [
+  "function factory() external view returns (address)",
+  "function WETH() external view returns (address)"
+];
+
+const FACTORY_ABI = [
+  "function getPair(address tokenA,address tokenB) external view returns (address)"
+];
 
 function deploymentPath() {
   return path.join(__dirname, "..", process.env.DEPLOYMENT_PATH || DEPLOYMENT_FILE);
+}
+
+function frontendDeploymentPath() {
+  return path.join(__dirname, "..", FRONTEND_DEPLOYMENT_FILE);
 }
 
 function loadDeployment() {
@@ -22,10 +43,9 @@ function loadDeployment() {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function writeDeployment(deployment) {
-  const filePath = deploymentPath();
+function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(deployment, null, 2)}${os.EOL}`);
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}${os.EOL}`);
   return filePath;
 }
 
@@ -54,184 +74,123 @@ function upsertEnv(values) {
   return envPath;
 }
 
-async function deployContract(name, args = []) {
-  const factory = await hre.ethers.getContractFactory(name);
-  const contract = await factory.deploy(...args);
-  await contract.waitForDeployment();
-  return contract;
+function requireAddress(label, value) {
+  if (!hre.ethers.isAddress(value)) {
+    throw new Error(`${label} is not a valid address: ${value}`);
+  }
+
+  return hre.ethers.getAddress(value);
 }
 
-async function assertContract(label, address) {
-  if (!hre.ethers.isAddress(address)) {
-    throw new Error(`${label} is not a valid address: ${address}`);
-  }
+async function assertContract(label, value) {
+  const address = requireAddress(label, value);
   const code = await hre.ethers.provider.getCode(address);
   if (!code || code === "0x") {
     throw new Error(`${label} has no contract code at ${address}`);
   }
+
+  return address;
 }
 
-async function ensureTokenBalance(token, owner, amount, label) {
-  const balance = BigInt(await token.balanceOf(owner));
-  if (balance >= amount) return;
-
-  const missing = amount - balance;
-  if (typeof token.mint === "function") {
-    const tx = await token.mint(owner, missing);
-    await tx.wait();
-    return;
-  }
-  if (typeof token.faucet === "function") {
-    const tx = await token.faucet(owner, missing);
-    await tx.wait();
-    return;
-  }
-
-  throw new Error(`${label} balance ${balance.toString()} is below required ${amount.toString()} and token has no mint/faucet`);
-}
-
-async function approveIfNeeded(token, owner, spender, amount, label) {
-  const allowance = BigInt(await token.allowance(owner, spender));
-  if (allowance >= amount) return;
-
-  const tx = await token.approve(spender, amount);
-  const receipt = await tx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error(`${label} approval failed for spender ${spender}`);
-  }
+function sameAddress(left, right) {
+  return hre.ethers.getAddress(left) === hre.ethers.getAddress(right);
 }
 
 async function main() {
-  const [deployer] = await hre.ethers.getSigners();
-  if (!deployer) {
-    throw new Error("No deployer signer available. Set DEPLOYER_PRIVATE_KEY before deploying QIEDex.");
-  }
-
   const network = await hre.ethers.provider.getNetwork();
-  if (network.chainId !== 1983n) {
-    throw new Error(`Expected QIE testnet chain ID 1983, got ${network.chainId.toString()}`);
+  if (network.chainId !== QIE_CHAIN_ID) {
+    throw new Error(`Expected QIE Mainnet chain ID ${QIE_CHAIN_ID.toString()}, got ${network.chainId.toString()}`);
   }
 
   const deployment = loadDeployment();
-  const deployerAddress = await deployer.getAddress();
-  const qusdcAddress = deployment.addresses?.qusdc || deployment.qusdc || deployment.qieStablecoin || deployment.stable;
-  if (!hre.ethers.isAddress(qusdcAddress)) {
-    throw new Error("Deployment does not contain a valid QUSDC address");
-  }
-
-  const existingWqie = process.env.WQIE_ADDRESS || deployment.addresses?.wqie || deployment.wqie;
-  let wqie;
-  if (existingWqie && hre.ethers.isAddress(existingWqie) && await hre.ethers.provider.getCode(existingWqie) !== "0x") {
-    wqie = await hre.ethers.getContractAt("WQIE", existingWqie);
-  } else {
-    wqie = await deployContract("WQIE");
-  }
-  const wqieAddress = await wqie.getAddress();
-
-  const factory = await deployContract("QIEDexFactory", [deployerAddress]);
-  const factoryAddress = await factory.getAddress();
-  const router = await deployContract("QIEDexRouter", [factoryAddress, wqieAddress]);
-  const routerAddress = await router.getAddress();
-
-  await assertContract("QUSDC", qusdcAddress);
-  await assertContract("WQIE", wqieAddress);
-  await assertContract("QIEDexFactory", factoryAddress);
-  await assertContract("QIEDexRouter", routerAddress);
-
-  const qusdc = await hre.ethers.getContractAt("MockQIEStable", qusdcAddress);
-  const wqieAmount = hre.ethers.parseUnits(process.env.QIEDEX_WQIE_LIQUIDITY || DEFAULT_WQIE_LIQUIDITY, 18);
-  const qusdcAmount = hre.ethers.parseUnits(process.env.QIEDEX_QUSDC_LIQUIDITY || DEFAULT_QUSDC_LIQUIDITY, 18);
-  const nativeBalance = BigInt(await hre.ethers.provider.getBalance(deployerAddress));
-
-  const wqieBalance = BigInt(await wqie.balanceOf(deployerAddress));
-  if (wqieBalance < wqieAmount) {
-    const wrapAmount = wqieAmount - wqieBalance;
-    if (nativeBalance <= wrapAmount + GAS_HEADROOM_WEI) {
-      throw new Error(
-        `Insufficient native QIE for WQIE seed. Need ${hre.ethers.formatEther(wrapAmount + GAS_HEADROOM_WEI)} QIE including gas headroom, have ${hre.ethers.formatEther(nativeBalance)} QIE. Set QIEDEX_WQIE_LIQUIDITY lower or fund deployer.`
-      );
-    }
-    const tx = await wqie.deposit({ value: wrapAmount });
-    const receipt = await tx.wait();
-    if (!receipt || receipt.status !== 1) {
-      throw new Error("WQIE deposit failed");
-    }
-  }
-  await ensureTokenBalance(qusdc, deployerAddress, qusdcAmount, "QUSDC");
-
-  await approveIfNeeded(wqie, deployerAddress, routerAddress, wqieAmount, "WQIE");
-  await approveIfNeeded(qusdc, deployerAddress, routerAddress, qusdcAmount, "QUSDC");
-
-  const deadline = Math.floor(Date.now() / 1000) + 600;
-  const addLiquidityTx = await router.addLiquidity(
-    wqieAddress,
-    qusdcAddress,
-    wqieAmount,
-    qusdcAmount,
-    1,
-    1,
-    deployerAddress,
-    deadline
+  const qusdcAddress = await assertContract(
+    "QUSDC",
+    process.env.QUSDC_ADDRESS || deployment.addresses?.qusdc || deployment.qusdc || MAINNET_QUSDC
   );
-  const addLiquidityReceipt = await addLiquidityTx.wait();
-  if (!addLiquidityReceipt || addLiquidityReceipt.status !== 1) {
-    throw new Error(`addLiquidity failed: ${addLiquidityTx.hash}`);
+  const wqieAddress = await assertContract(
+    "WQIE",
+    process.env.WQIE_ADDRESS || deployment.addresses?.wqie || deployment.wqie || MAINNET_WQIE
+  );
+  const factoryAddress = await assertContract(
+    "QIEDex Factory",
+    process.env.QIEDEX_FACTORY_ADDRESS || deployment.addresses?.qiedexFactory || deployment.qiedexFactory || MAINNET_QIEDEX_FACTORY
+  );
+  const routerAddress = await assertContract(
+    "QIEDex Router",
+    process.env.QIEDEX_ROUTER_ADDRESS || deployment.addresses?.qiedexRouter || deployment.qiedexRouter || MAINNET_QIEDEX_ROUTER
+  );
+
+  const router = new hre.ethers.Contract(routerAddress, ROUTER_ABI, hre.ethers.provider);
+  const factory = new hre.ethers.Contract(factoryAddress, FACTORY_ABI, hre.ethers.provider);
+  const routerFactory = await router.factory();
+  const routerWqie = await router.WETH();
+  if (!sameAddress(routerFactory, factoryAddress)) {
+    throw new Error(`Router factory mismatch: expected ${factoryAddress}, got ${routerFactory}`);
+  }
+  if (!sameAddress(routerWqie, wqieAddress)) {
+    throw new Error(`Router WQIE mismatch: expected ${wqieAddress}, got ${routerWqie}`);
   }
 
-  const pairAddress = await factory.getPair(wqieAddress, qusdcAddress);
-  await assertContract("QIEDexPair", pairAddress);
-  const pair = await hre.ethers.getContractAt("QIEDexPair", pairAddress);
-  const reserves = await pair.getReserves();
-  const reserve0 = BigInt(reserves[0]);
-  const reserve1 = BigInt(reserves[1]);
-  if (reserve0 === 0n || reserve1 === 0n) {
-    throw new Error(`QIEDex pair has zero reserves: ${reserve0.toString()} / ${reserve1.toString()}`);
-  }
+  const pairAddress = await factory.getPair(wqieAddress, qusdcAddress).catch(() => hre.ethers.ZeroAddress);
+  const hasPair = hre.ethers.isAddress(pairAddress) && !sameAddress(pairAddress, hre.ethers.ZeroAddress)
+    && await hre.ethers.provider.getCode(pairAddress) !== "0x";
 
   const nextDeployment = {
     ...deployment,
+    stable: qusdcAddress,
+    qusdc: qusdcAddress,
+    qieStablecoin: qusdcAddress,
     addresses: {
       ...(deployment.addresses || {}),
       qiedexFactory: factoryAddress,
       qiedexRouter: routerAddress,
-      qiedexPair: pairAddress,
+      qiedexPair: hasPair ? hre.ethers.getAddress(pairAddress) : undefined,
       wqie: wqieAddress,
-      qusdc: qusdcAddress
+      qusdc: qusdcAddress,
+      wrappedETH: WRAPPED_ETH,
+      wrappedBNB: WRAPPED_BNB,
+      wrappedUSDC: WRAPPED_USDC,
+      wrappedUSDT: WRAPPED_USDT
     },
     qiedexFactory: factoryAddress,
     qiedexRouter: routerAddress,
-    qiedexPair: pairAddress,
+    qiedexPair: hasPair ? hre.ethers.getAddress(pairAddress) : undefined,
     wqie: wqieAddress,
-    qusdc: qusdcAddress,
-    qiedexDeployedAt: new Date().toISOString()
+    wrappedETH: WRAPPED_ETH,
+    wrappedBNB: WRAPPED_BNB,
+    wrappedUSDC: WRAPPED_USDC,
+    wrappedUSDT: WRAPPED_USDT,
+    qiedexConfiguredAt: new Date().toISOString()
   };
 
-  const deploymentFile = writeDeployment(nextDeployment);
+  const deploymentFile = writeJson(deploymentPath(), nextDeployment);
+  const frontendFile = writeJson(frontendDeploymentPath(), nextDeployment);
   const envFile = upsertEnv({
     QIEDEX_FACTORY_ADDRESS: factoryAddress,
     QIEDEX_ROUTER_ADDRESS: routerAddress,
     WQIE_ADDRESS: wqieAddress,
-    QUSDC_ADDRESS: qusdcAddress
+    QUSDC_ADDRESS: qusdcAddress,
+    WRAPPED_ETH_ADDRESS: WRAPPED_ETH,
+    WRAPPED_BNB_ADDRESS: WRAPPED_BNB,
+    WRAPPED_USDC_ADDRESS: WRAPPED_USDC,
+    WRAPPED_USDT_ADDRESS: WRAPPED_USDT
   });
 
-  console.log("QIEDex deployment complete");
+  console.log("QIEDex mainnet configuration verified");
   console.log(JSON.stringify({
-    deployer: deployerAddress,
-    wqie: wqieAddress,
-    qusdc: qusdcAddress,
     qiedexFactory: factoryAddress,
     qiedexRouter: routerAddress,
-    qiedexPair: pairAddress,
-    reserve0: reserve0.toString(),
-    reserve1: reserve1.toString(),
-    addLiquidityTx: addLiquidityTx.hash,
+    qiedexPair: hasPair ? hre.ethers.getAddress(pairAddress) : null,
+    wqie: wqieAddress,
+    qusdc: qusdcAddress,
     deploymentFile,
+    frontendFile,
     envFile
   }, null, 2));
 }
 
 main().catch((error) => {
-  console.error("QIEDex deployment failed");
+  console.error("QIEDex mainnet configuration failed");
   console.error(error.shortMessage || error.reason || error.message || String(error));
   console.error(error);
   process.exitCode = 1;

@@ -11,7 +11,7 @@ function sameAddress(left, right) {
 }
 
 function deploymentPath() {
-  return path.join(__dirname, "..", process.env.DEPLOYMENT_PATH || "deployments/qie-testnet.json");
+  return path.join(__dirname, "..", process.env.DEPLOYMENT_PATH || "deployments/qie-mainnet.json");
 }
 
 function loadDeployment() {

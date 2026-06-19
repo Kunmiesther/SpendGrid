@@ -1,7 +1,7 @@
 {
   "name": "@spendgrid/sdk",
   "version": "0.1.0",
-  "description": "Framework-agnostic SDK for SpendGrid payments on QIE testnet.",
+  "description": "Framework-agnostic SDK for SpendGrid payments on QIE Mainnet.",
   "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",

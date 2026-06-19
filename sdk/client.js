@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import {
   AGENT_REGISTRY_ABI,
   ERC20_ABI,
-  QIE_TESTNET_CHAIN_ID,
+  QIE_MAINNET_CHAIN_ID,
   SPEND_CONTROLLER_ABI,
   STREAM_VAULT_ABI,
   normalizeDeployment,
@@ -36,7 +36,7 @@ function hasSignerShape(value) {
  * @param {import("ethers").Signer|import("ethers").Provider|object} [options.signer] ethers signer or EIP-1193 provider.
  * @param {import("ethers").Provider|object} [options.provider] ethers provider or EIP-1193 provider.
  * @param {string} [options.rpcUrl] JSON-RPC URL used when no provider is injected.
- * @param {string|object} [options.network] SpendGrid network config. Defaults to qieTestnet.
+ * @param {string|object} [options.network] SpendGrid network config. Defaults to qieMainnet.
  * @param {object} [options.deployment] Deployment artifact or address override.
  * @param {string} [options.backendUrl] Optional SpendGrid backend URL for status/anomaly helpers.
  * @param {string|bigint} [options.safeSpendLimit] Optional client max spend in token units.
@@ -53,7 +53,7 @@ export class SpendGridSDK {
     this.adapterMode = Boolean(options.adapterMode);
     this.cache = options.cache || createSpendGridCache({ ttlMs: options.cacheTtlMs });
     this.tokenDecimals = Number.isInteger(options.tokenDecimals) ? options.tokenDecimals : 18;
-    this.network = resolveNetworkConfig(options.network || "qieTestnet");
+    this.network = resolveNetworkConfig(options.network || "qieMainnet");
     const deployment = options.deployment || {};
     const topLevelDeploymentAddresses = {
       agentRegistry: deployment.agentRegistry || deployment.registry,
@@ -77,7 +77,7 @@ export class SpendGridSDK {
     this.addresses = this._normalizeAddresses(this.deployment.addresses);
     this.provider = this._resolveProvider(options);
     this.signer = this._resolveSigner(options);
-    this.contracts = this.provider ? this._makeContracts() : null;
+    this.contracts = this.provider && this._hasProtocolAddresses() ? this._makeContracts() : null;
     this.safeSpendLimitWei = this._resolveSafeSpendLimit(options);
   }
 
@@ -156,6 +156,7 @@ export class SpendGridSDK {
   }
 
   async getAgent(agentId = this.agentId) {
+    this._requireContracts();
     const resolvedAgentId = assertPositiveAgentId(agentId);
 
     return this.cache.remember(CACHE_KEYS.agent, resolvedAgentId.toString(), async () => {
@@ -179,6 +180,7 @@ export class SpendGridSDK {
   }
 
   async getAgentIdForWallet(walletAddress) {
+    this._requireContracts();
     const wallet = assertAddress(walletAddress, "wallet");
 
     return this.cache.remember(CACHE_KEYS.walletAgent, wallet, async () => {
@@ -192,9 +194,10 @@ export class SpendGridSDK {
   }
 
   async registerAgent({ agentWallet, qiePassId } = {}) {
+    this._requireContracts();
     const signer = await this.requireSigner();
     const wallet = assertAddress(agentWallet || await signer.getAddress(), "agentWallet");
-    const identity = qiePassId || ethers.id(`spendgrid:qie-testnet:${wallet.toLowerCase()}`);
+    const identity = qiePassId || ethers.id(`spendgrid:qie-mainnet:${wallet.toLowerCase()}`);
     if (!ethers.isHexString(identity, 32)) {
       throw new SpendGridError("qiePassId must be bytes32", "INVALID_QIE_PASS_ID", { qiePassId: identity });
     }
@@ -228,6 +231,7 @@ export class SpendGridSDK {
   }
 
   async ensureControllerConfig({ agentId = this.agentId, dailyLimit, whitelistVault = true } = {}) {
+    this._requireContracts();
     const resolvedAgentId = assertPositiveAgentId(agentId);
     const signer = await this.requireSigner();
     const controller = this.contracts.controller.connect(signer);
@@ -278,6 +282,7 @@ export class SpendGridSDK {
   }
 
   async getBudget(agentId = this.agentId) {
+    this._requireContracts();
     const resolvedAgentId = assertPositiveAgentId(agentId);
     return this.cache.remember(CACHE_KEYS.controller, resolvedAgentId.toString(), async () => {
       const budget = await this.contracts.controller.getBudget(resolvedAgentId);
@@ -321,6 +326,7 @@ export class SpendGridSDK {
   }
 
   async assertSpendAllowed({ agentId = this.agentId, amountWei, service = this.addresses.streamVault }) {
+    this._requireContracts();
     const resolvedAgentId = assertPositiveAgentId(agentId);
     const amount = BigInt(amountWei);
     if (amount <= 0n) {
@@ -406,6 +412,7 @@ export class SpendGridSDK {
   }
 
   async assertTokenAllowance({ owner, amountWei, spender = this.addresses.streamVault }) {
+    this._requireContracts();
     const tokenOwner = assertAddress(owner, "owner");
     const amount = BigInt(amountWei);
     const allowance = await this.contracts.qusdc.allowance(tokenOwner, spender);
@@ -445,9 +452,9 @@ export class SpendGridSDK {
 
   async assertNetwork() {
     const network = await this.provider.getNetwork();
-    if (network.chainId !== BigInt(this.deployment.chainId || QIE_TESTNET_CHAIN_ID)) {
+    if (network.chainId !== BigInt(this.deployment.chainId || QIE_MAINNET_CHAIN_ID)) {
       throw new SpendGridError("connected wallet is on the wrong network", "NETWORK_MISMATCH", {
-        expectedChainId: Number(this.deployment.chainId || QIE_TESTNET_CHAIN_ID),
+        expectedChainId: Number(this.deployment.chainId || QIE_MAINNET_CHAIN_ID),
         actualChainId: network.chainId.toString()
       });
     }
@@ -489,11 +496,25 @@ export class SpendGridSDK {
 
   _normalizeAddresses(addresses) {
     return {
-      agentRegistry: assertAddress(addresses.agentRegistry, "AgentRegistry"),
-      spendController: assertAddress(addresses.spendController, "SpendController"),
-      streamVault: assertAddress(addresses.streamVault, "StreamVault"),
+      agentRegistry: addresses.agentRegistry ? assertAddress(addresses.agentRegistry, "AgentRegistry") : null,
+      spendController: addresses.spendController ? assertAddress(addresses.spendController, "SpendController") : null,
+      streamVault: addresses.streamVault ? assertAddress(addresses.streamVault, "StreamVault") : null,
       qusdc: assertAddress(addresses.qusdc, "QUSDC")
     };
+  }
+
+  _hasProtocolAddresses() {
+    return Boolean(this.addresses.agentRegistry && this.addresses.spendController && this.addresses.streamVault);
+  }
+
+  _requireContracts() {
+    if (!this.contracts) {
+      throw new SpendGridError(
+        "SpendGrid protocol contract addresses are required for direct contract operations",
+        "CONTRACT_ADDRESSES_REQUIRED",
+        { chainId: this.deployment.chainId, network: this.deployment.network }
+      );
+    }
   }
 
   _resolveProvider(options) {
