@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
+  clearWalletSession,
   clearStoredWallet,
   connectWallet,
   copyAddress,
@@ -29,6 +30,16 @@ const INITIAL_STATE = {
 
 const WalletContext = createContext(null);
 
+function normalizeChainId(chainId) {
+  if (typeof chainId === "number") return chainId;
+  if (typeof chainId === "bigint") return Number(chainId);
+  if (typeof chainId === "string") {
+    return Number.parseInt(chainId, chainId.startsWith("0x") ? 16 : 10);
+  }
+
+  return null;
+}
+
 function useWalletController() {
   const [state, setState] = useState(INITIAL_STATE);
 
@@ -46,13 +57,24 @@ function useWalletController() {
     }
   }, [refreshProviders]);
 
-  const disconnect = useCallback(() => {
-    clearStoredWallet();
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleProviderAnnounced = () => refreshProviders();
+    window.addEventListener?.("eip6963:announceProvider", handleProviderAnnounced);
+    window.dispatchEvent?.(new Event("eip6963:requestProvider"));
+    return () => {
+      window.removeEventListener?.("eip6963:announceProvider", handleProviderAnnounced);
+    };
+  }, [refreshProviders]);
+
+  const disconnect = useCallback(async () => {
+    const rawProvider = state.rawProvider;
     setState((s) => ({
       ...INITIAL_STATE,
       providers: s.providers,
     }));
-  }, []);
+    await clearWalletSession(rawProvider);
+  }, [state.rawProvider]);
 
   useEffect(() => {
     if (!state.rawProvider) return undefined;
@@ -72,7 +94,7 @@ function useWalletController() {
     };
 
     const handleChainChanged = (chainId) => {
-      setState((s) => ({ ...s, chainId: Number.parseInt(chainId, 16) }));
+      setState((s) => ({ ...s, chainId: normalizeChainId(chainId) }));
     };
 
     state.rawProvider.on?.("accountsChanged", handleAccountsChanged);

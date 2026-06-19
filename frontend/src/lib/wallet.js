@@ -17,6 +17,8 @@ export const QIE_MAINNET = {
 const WALLET_STORAGE_KEY = "spendgrid.wallet";
 const WALLETCONNECT_PROJECT_ID = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID || "SPENDGRID_QIE_MAINNET";
 const WALLETCONNECT_ID = "walletconnect";
+let activeWalletConnectProvider = null;
+const eip6963Providers = [];
 
 const WALLET_PRIORITIES = {
   qie: 0,
@@ -25,9 +27,23 @@ const WALLET_PRIORITIES = {
   walletconnect: 100,
 };
 
+function registerEip6963Provider(event) {
+  const provider = event?.detail?.provider;
+  if (provider && !eip6963Providers.includes(provider)) {
+    eip6963Providers.push(provider);
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener?.("eip6963:announceProvider", registerEip6963Provider);
+  window.dispatchEvent?.(new Event("eip6963:requestProvider"));
+}
+
 function getInjectedProviders() {
   if (typeof window === "undefined") return [];
   const detected = [];
+  window.dispatchEvent?.(new Event("eip6963:requestProvider"));
+  detected.push(...eip6963Providers);
   if (Array.isArray(window.ethereum?.providers)) {
     detected.push(...window.ethereum.providers);
   }
@@ -39,6 +55,12 @@ function getInjectedProviders() {
     window.qie,
     window.qieWallet,
     window.qieEthereum,
+    window.qie?.ethereum,
+    window.qieWallet?.ethereum,
+    window.QIEWallet,
+    window.QIEWallet?.ethereum,
+    window.ethereum?.qie,
+    window.ethereum?.qieWallet,
     window.metamask?.ethereum,
     window.rabby?.ethereum,
   ].forEach((provider) => {
@@ -49,14 +71,16 @@ function getInjectedProviders() {
 }
 
 function isQieProvider(provider) {
+  const rdns = provider?.info?.rdns || provider?.providerInfo?.rdns || "";
+  const name = provider?.info?.name || provider?.providerInfo?.name || provider?.walletName || provider?.name || "";
   return Boolean(
     provider?.isQIE ||
       provider?.isQie ||
       provider?.isQieWallet ||
       provider?.isQIEWallet ||
       provider?.qieWallet ||
-      provider?.walletName?.toLowerCase?.().includes("qie") ||
-      provider?.name?.toLowerCase?.().includes("qie")
+      String(rdns).toLowerCase().includes("qie") ||
+      String(name).toLowerCase().includes("qie")
   );
 }
 
@@ -130,6 +154,60 @@ export function clearStoredWallet() {
   }
 }
 
+function clearKnownConnectorStorage() {
+  if (typeof window === "undefined") return;
+
+  const keyMatchers = [
+    WALLET_STORAGE_KEY,
+    "walletconnect",
+    "wc@2",
+    "wagmi",
+    "rainbowkit",
+    "web3modal",
+    "appkit",
+    "reown"
+  ];
+  [window.localStorage, window.sessionStorage].forEach((storage) => {
+    if (!storage) return;
+    try {
+      const keys = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (key && keyMatchers.some((matcher) => key.toLowerCase().includes(matcher.toLowerCase()))) {
+          keys.push(key);
+        }
+      }
+      keys.forEach((key) => storage.removeItem(key));
+    } catch (_error) {
+      // Storage can be unavailable in privacy-restricted browser contexts.
+    }
+  });
+}
+
+export async function clearWalletSession(rawProvider) {
+  clearStoredWallet();
+  clearKnownConnectorStorage();
+
+  const providers = [
+    rawProvider,
+    activeWalletConnectProvider
+  ].filter(Boolean);
+
+  await Promise.all(providers.map(async (provider) => {
+    try {
+      if (typeof provider.disconnect === "function") {
+        await provider.disconnect();
+      } else if (typeof provider.close === "function") {
+        await provider.close();
+      }
+    } catch (_error) {
+      // Wallet extensions may reject programmatic disconnect; local state is still cleared.
+    }
+  }));
+
+  activeWalletConnectProvider = null;
+}
+
 export function getProviderById(walletId) {
   const providers = getWalletProviders();
   return providers.find((wallet) => wallet.id === walletId) || null;
@@ -157,6 +235,7 @@ async function createWalletConnectProvider() {
   });
 
   await provider.enable();
+  activeWalletConnectProvider = provider;
   return provider;
 }
 

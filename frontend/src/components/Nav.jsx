@@ -67,7 +67,7 @@ export default function Nav() {
             <button
               onClick={() => {
                 refreshProviders();
-                setWalletOpen((open) => !open);
+                setWalletOpen((open) => (connected ? !open : true));
               }}
               disabled={loading}
               className="btn-secondary text-xs px-4 py-2"
@@ -141,7 +141,7 @@ export default function Nav() {
                       </button>
                       <button
                         onClick={() => {
-                          disconnect();
+                          disconnect().catch(() => {});
                           setWalletOpen(false);
                         }}
                         className="w-full text-left px-4 py-3 text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"

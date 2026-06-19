@@ -215,40 +215,48 @@ SpendGrid uses the configured QIEDex router, factory, WQIE token, and QUSDC pair
 
 ---
 
+## Native QIEDex Integration
+
+Users can fund with QIE, swap directly to QUSDC, and execute agent payments without leaving SpendGrid.
+
+SpendGrid internally routes swaps through QIEDex liquidity. Native QIE is wrapped to WQIE only as an internal routing step, then swapped through QIEDex into QUSDC for the user's wallet before payment-intent validation and settlement continue.
+
+---
+
 # Architecture Overview
 
 ```
-                    +--------------------+
-                    |  External App      |
-                    +--------------------+
-                              │
-                              │
-                      Payment Intent
-                              │
-                              ▼
-                 +-----------------------+
-                 | SpendGrid Backend API |
-                 +-----------------------+
-                              │
-                              ▼
-               +----------------------------+
-               | SpendGrid Policy Engine     |
-               +----------------------------+
-                 │
-                 ├── QIE Pass
-                 ├── Budget
-                 ├── Liquidity
-                 ├── Allowance
-                 ├── Registry
-                 └── Spending Rules
-                              │
-                              ▼
-                  +----------------------+
-                  | SpendGrid Contracts  |
-                  +----------------------+
-                              │
-                              ▼
-                     QIE Blockchain
+User
+  |
+  v
+Wallet
+  |
+  v
+SpendGrid Frontend
+  |
+  v
+QIEDex Swap Engine
+  |
+  v
+QUSDC
+  |
+  v
+Payment Intent
+  |
+  v
+Policy Engine
+  |
+  v
+Validation
+  |
+  v
+SpendGrid Agent
+  |
+  v
+Vault
+  |
+  v
+Recipient
 ```
 
 ---
@@ -936,6 +944,19 @@ Explorer: https://mainnet.qie.digital/
 | QIEDex Router   | `0x08cd2e72e156D8563B4351eb4065C262A9f553Ef` |
 | WQIE            | `0x0087904D95BEe9E5F24dc8852804b547981A9139` |
 | WQIE/QUSDC Pair | `0x73a3cCF7da7e473ed2e9994aE764f0E30f4e4DFe` |
+
+---
+
+## QIE Mainnet Deployment
+
+SpendGrid now runs against QIE Mainnet instead of Testnet. The frontend, backend runtime, payment-intent validation, QIEDex swap routing, and settlement contracts use the QIE Mainnet deployment artifact.
+
+| QIEDex Component | Address                                      | Role inside SpendGrid |
+| ---------------- | -------------------------------------------- | --------------------- |
+| Router           | `0x08cd2e72e156D8563B4351eb4065C262A9f553Ef` | Executes wallet-side and runtime swap routes into QUSDC. |
+| Factory          | `0x8E23128a5511223bE6c0d64106e2D4508C08398C` | Resolves the WQIE/QUSDC liquidity pair used for quotes and liquidity checks. |
+| WQIE             | `0x0087904D95BEe9E5F24dc8852804b547981A9139` | Wrapped native QIE used internally as the QIEDex input token for QIE-funded swaps. |
+| QUSDC            | `0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5` | Stablecoin balance validated by SpendGrid and transferred by the Vault to recipients. |
 
 ---
 

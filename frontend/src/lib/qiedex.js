@@ -27,7 +27,12 @@ export const QIEDEX_ROUTER_ABI = [
   "function WETH() external view returns (address)",
   "function getAmountOut(uint256 amountIn,address input,address output) external view returns (uint256 amountOut)",
   "function getAmountsOut(uint256 amountIn,address[] calldata path) external view returns (uint256[] memory amounts)",
-  "function swapExactTokensForTokens(uint256 amountIn,uint256 amountOutMin,address[] calldata path,address to,uint256 deadline) external returns (uint256[] memory amounts)"
+  "function swapExactTokensForTokens(uint256 amountIn,uint256 amountOutMin,address[] calldata path,address to,uint256 deadline) external returns (uint256[] memory amounts)",
+  "error Expired()",
+  "error InvalidPath()",
+  "error PairMissing(address tokenA,address tokenB)",
+  "error InsufficientOutputAmount()",
+  "error TransferFailed()"
 ];
 
 export const QIEDEX_FACTORY_ABI = [
@@ -41,6 +46,111 @@ export const QIEDEX_PAIR_ABI = [
 ];
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
+
+function errorText(error) {
+  return [
+    error?.shortMessage,
+    error?.reason,
+    error?.info?.error?.message,
+    error?.error?.message,
+    error?.message
+  ].filter(Boolean)[0] || String(error);
+}
+
+function errorData(error) {
+  return error?.data
+    || error?.info?.error?.data
+    || error?.error?.data
+    || error?.revert?.data
+    || null;
+}
+
+function formatRouterError(error) {
+  const data = errorData(error);
+  if (data) {
+    try {
+      const parsed = new ethers.Interface(QIEDEX_ROUTER_ABI).parseError(data);
+      if (parsed?.name === "PairMissing") {
+        return `QIEDex pair is missing for ${parsed.args.tokenA} -> ${parsed.args.tokenB}.`;
+      }
+      if (parsed?.name === "InsufficientOutputAmount") {
+        return "QIEDex router rejected the swap because the quoted output is below the selected slippage limit.";
+      }
+      if (parsed?.name === "TransferFailed") {
+        return "QIEDex router could not transfer the input token. Check WQIE balance and router allowance.";
+      }
+      if (parsed?.name === "Expired") {
+        return "QIEDex router rejected the swap because the quote deadline expired.";
+      }
+      if (parsed?.name === "InvalidPath") {
+        return "QIEDex router rejected the swap path.";
+      }
+    } catch (_parseError) {
+      // Fall through to the wallet/provider error text.
+    }
+  }
+
+  const text = errorText(error);
+  if (/insufficient funds/i.test(text)) {
+    return "Insufficient QIE balance for the swap amount and gas.";
+  }
+  if (/user rejected|user denied|rejected by user/i.test(text)) {
+    return "Swap was rejected in the wallet.";
+  }
+  if (/missing revert data|execution reverted|call exception/i.test(text)) {
+    return `QIEDex router reverted the swap. ${text}`;
+  }
+
+  return text;
+}
+
+function stageFailure(stage, error) {
+  if (stage === "estimating") {
+    return `QIEDex swap estimate failed: ${formatRouterError(error)}`;
+  }
+  if (stage === "swapping") {
+    return `QIEDex swap failed: ${formatRouterError(error)}`;
+  }
+  if (stage === "approving") {
+    return `QIEDex router approval failed: ${formatRouterError(error)}`;
+  }
+  if (stage === "wrapping") {
+    return `Unable to prepare native QIE for QIEDex: ${formatRouterError(error)}`;
+  }
+
+  return formatRouterError(error);
+}
+
+async function waitForSuccess(tx, label) {
+  const receipt = await tx.wait();
+  if (!receipt || receipt.status !== 1) {
+    throw new Error(`${label} failed: ${tx.hash}`);
+  }
+
+  return receipt;
+}
+
+async function unwrapNativeInput({ signer, owner, amount }) {
+  const wqie = new ethers.Contract(WQIE_ADDRESS, WQIE_ABI, signer);
+  const balance = BigInt(await wqie.balanceOf(owner));
+  const unwrapAmount = balance < amount ? balance : amount;
+  if (unwrapAmount <= 0n) {
+    return {
+      unwrapped: false,
+      amount: "0",
+      reason: "No WQIE balance was available to unwrap."
+    };
+  }
+
+  const tx = await wqie.withdraw(unwrapAmount);
+  const receipt = await waitForSuccess(tx, "WQIE unwrap");
+  return {
+    unwrapped: true,
+    amount: unwrapAmount.toString(),
+    hash: tx.hash,
+    blockNumber: receipt.blockNumber
+  };
+}
 
 export function makeSwapTokens(addresses = {}) {
   return [
@@ -211,53 +321,86 @@ export async function executeQiedexSwap({ provider, signer, token, amountIn, min
   const txs = {
     wrap: null,
     approval: null,
-    swap: null
+    swap: null,
+    unwrap: null
   };
 
   let swapToken = token;
-  if (token.native) {
-    const wqie = new ethers.Contract(WQIE_ADDRESS, WQIE_ABI, signer);
-    const balance = BigInt(await provider.getBalance(owner));
-    if (balance <= input) {
-      throw new Error("Native QIE balance is too low for the wrap amount and gas.");
+  const nativeInput = Boolean(token.native);
+  let wrappedNative = false;
+  let stage = "preparing";
+
+  try {
+    if (nativeInput) {
+      stage = "wrapping";
+      const wqie = new ethers.Contract(WQIE_ADDRESS, WQIE_ABI, signer);
+      const balance = BigInt(await provider.getBalance(owner));
+      if (balance <= input) {
+        throw new Error("Native QIE balance is too low for the swap amount and gas.");
+      }
+      const wrapTx = await wqie.deposit({ value: input });
+      txs.wrap = wrapTx.hash;
+      await waitForSuccess(wrapTx, "Native QIE wrap");
+      wrappedNative = true;
+      swapToken = {
+        ...token,
+        native: false,
+        address: WQIE_ADDRESS,
+        symbol: "WQIE"
+      };
     }
-    const wrapTx = await wqie.deposit({ value: input });
-    txs.wrap = wrapTx.hash;
-    await wrapTx.wait();
-    swapToken = {
-      ...token,
-      native: false,
-      address: WQIE_ADDRESS,
-      symbol: "WQIE"
+
+    stage = "approving";
+    const tokenContract = new ethers.Contract(swapToken.address, ERC20_ABI, signer);
+    const allowance = BigInt(await tokenContract.allowance(owner, QIEDEX_ROUTER_ADDRESS));
+    if (allowance < input) {
+      const approvalTx = await tokenContract.approve(QIEDEX_ROUTER_ADDRESS, input);
+      txs.approval = approvalTx.hash;
+      await waitForSuccess(approvalTx, "QIEDex router approval");
+    }
+
+    const router = new ethers.Contract(QIEDEX_ROUTER_ADDRESS, QIEDEX_ROUTER_ABI, signer);
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+    const path = [swapToken.address, qusdcAddress];
+
+    stage = "estimating";
+    await router.swapExactTokensForTokens.estimateGas(input, minOut, path, to, deadline);
+
+    stage = "swapping";
+    const swapTx = await router.swapExactTokensForTokens(input, minOut, path, to, deadline);
+    txs.swap = swapTx.hash;
+    const receipt = await waitForSuccess(swapTx, "QIEDex swap");
+
+    return {
+      ...txs,
+      blockNumber: receipt.blockNumber,
+      gasUsed: receipt.gasUsed?.toString?.() || null,
+      path
     };
-  }
+  } catch (error) {
+    let rollback = null;
+    if (nativeInput && wrappedNative) {
+      try {
+        rollback = await unwrapNativeInput({ signer, owner, amount: input });
+        txs.unwrap = rollback.hash || null;
+      } catch (unwrapError) {
+        rollback = {
+          unwrapped: false,
+          reason: `Unable to unwrap WQIE back to QIE: ${formatRouterError(unwrapError)}`
+        };
+      }
+    }
 
-  const tokenContract = new ethers.Contract(swapToken.address, ERC20_ABI, signer);
-  const allowance = BigInt(await tokenContract.allowance(owner, QIEDEX_ROUTER_ADDRESS));
-  if (allowance < input) {
-    const approvalTx = await tokenContract.approve(QIEDEX_ROUTER_ADDRESS, input);
-    txs.approval = approvalTx.hash;
-    await approvalTx.wait();
+    const message = stageFailure(stage, error);
+    const rollbackMessage = rollback
+      ? rollback.unwrapped
+        ? " Wrapped QIE was returned to native QIE."
+        : ` ${rollback.reason}`
+      : "";
+    const wrappedError = new Error(`${message}${rollbackMessage}`);
+    wrappedError.cause = error;
+    wrappedError.transactions = txs;
+    wrappedError.rollback = rollback;
+    throw wrappedError;
   }
-
-  const router = new ethers.Contract(QIEDEX_ROUTER_ADDRESS, QIEDEX_ROUTER_ABI, signer);
-  const deadline = Math.floor(Date.now() / 1000) + 300;
-  const swapTx = await router.swapExactTokensForTokens(
-    input,
-    minOut,
-    [swapToken.address, qusdcAddress],
-    to,
-    deadline
-  );
-  txs.swap = swapTx.hash;
-  const receipt = await swapTx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error(`QIEDex swap failed: ${swapTx.hash}`);
-  }
-
-  return {
-    ...txs,
-    blockNumber: receipt.blockNumber,
-    gasUsed: receipt.gasUsed?.toString?.() || null
-  };
 }

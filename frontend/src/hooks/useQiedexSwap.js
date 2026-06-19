@@ -3,7 +3,6 @@ import { ethers } from "ethers";
 import { QIE_MAINNET } from "../lib/wallet";
 import {
   DEFAULT_SLIPPAGE_BPS,
-  ERC20_ABI,
   QIEDEX_ROUTER_ADDRESS,
   QUSDC_ADDRESS,
   executeQiedexSwap,
@@ -159,11 +158,10 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
         minReceived: activeQuote.minReceived,
         recipient: wallet.address
       });
-      await refreshBalances();
+      const nextBalances = await refreshBalances();
 
-      const qusdc = new ethers.Contract(QUSDC_ADDRESS, ERC20_ABI, provider);
-      const freshQusdc = await qusdc.balanceOf(wallet.address);
-      const sufficient = BigInt(freshQusdc) >= required;
+      const freshQusdc = BigInt(nextBalances.QUSDC?.raw || "0");
+      const sufficient = required <= 0n || freshQusdc >= required;
       const message = sufficient
         ? "Swap confirmed. QUSDC balance is ready for payment intent."
         : "Swap confirmed. Add more QUSDC to meet the payment amount.";

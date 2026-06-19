@@ -78,7 +78,7 @@ function Toggle({ enabled }) {
 export default function BudgetControl() {
   const [ref, inView] = useInView(0.1);
   const wallet = useWallet();
-  const { deployment, loopStatus, paymentIntent, running, snapshot, submitIntent, stopAgent } = useAgentRuntime();
+  const { deployment, loopStatus, paymentIntent, refresh, running, snapshot, submitIntent, stopAgent } = useAgentRuntime();
   const swap = useQiedexSwap({
     wallet,
     deployment,
@@ -137,6 +137,12 @@ export default function BudgetControl() {
   const handleConnect = async (walletId) => {
     setIntentNotice(null);
     await wallet.connect(walletId).catch(() => {});
+  };
+
+  const handleSwap = async () => {
+    setIntentNotice(null);
+    await swap.swap();
+    await refresh();
   };
 
   return (
@@ -283,11 +289,11 @@ export default function BudgetControl() {
                 </div>
               )}
 
-              {walletReady && !swap.hasRequiredQusdc && (
+              {walletReady && (
                 <div className="border border-wire bg-surface-1 rounded-sm overflow-hidden">
                   <div className="px-5 py-4 border-b border-wire">
                     <p className="font-mono text-label text-amber-500 uppercase tracking-widest mb-2">
-                      Insufficient QUSDC
+                      {swap.hasRequiredQusdc ? "QUSDC ready" : "Insufficient QUSDC"}
                     </p>
                     <h4 className="text-xl font-medium text-ink-0">Swap using QIEDex</h4>
                   </div>
@@ -376,8 +382,6 @@ export default function BudgetControl() {
                         </p>
                         {swap.success?.swap && (
                           <div className="mt-3 flex flex-wrap gap-3">
-                            {swap.success.wrap && <TxLink hash={swap.success.wrap} />}
-                            {swap.success.approval && <TxLink hash={swap.success.approval} />}
                             <TxLink hash={swap.success.swap} />
                           </div>
                         )}
@@ -385,11 +389,11 @@ export default function BudgetControl() {
                     )}
 
                     <button
-                      onClick={() => swap.swap().catch(() => {})}
+                      onClick={() => handleSwap().catch(() => {})}
                       disabled={!swap.quote || swap.quoting || swap.swapping || !swap.inputAmount}
                       className="btn-primary w-full justify-center disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
                     >
-                      {swap.swapping ? "Swapping..." : swap.quoting ? "Loading quote..." : "Swap"}
+                      {swap.swapping && swap.selectedTokenId === "QIE" ? "Swapping QIE to QUSDC..." : swap.swapping ? "Swapping..." : swap.quoting ? "Loading quote..." : "Swap"}
                     </button>
                   </div>
                 </div>
