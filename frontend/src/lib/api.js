@@ -5,6 +5,13 @@ const API_BASE =
 
 export { API_BASE };
 
+const READ_TIMEOUT_MS = Number(process.env.REACT_APP_API_READ_TIMEOUT_MS || 15000);
+const MUTATION_TIMEOUT_MS = Number(process.env.REACT_APP_API_MUTATION_TIMEOUT_MS || 120000);
+
+function timeoutMessage(path) {
+  return `SpendGrid API request timed out while loading ${path}.`;
+}
+
 function withQuery(path, params = {}) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -17,21 +24,37 @@ function withQuery(path, params = {}) {
   return queryString ? `${path}?${queryString}` : path;
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, timeoutMs = method === "GET" ? READ_TIMEOUT_MS : MUTATION_TIMEOUT_MS) {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
   const opts = {
     method,
     headers: { "Content-Type": "application/json" },
+    signal: controller?.signal,
   };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${API_BASE}${path}`, opts);
-  const payload = await res.json().catch(() => null);
-  if (!res.ok) {
-    if (payload && path === "/payment-intents") {
-      return payload;
+  try {
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`${API_BASE}${path}`, opts);
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      if (payload && path === "/payment-intents") {
+        return payload;
+      }
+      throw new Error(payload?.error || payload?.message || res.statusText);
     }
-    throw new Error(payload?.error || payload?.message || res.statusText);
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(timeoutMessage(path));
+    }
+    throw error;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
-  return payload;
 }
 
 export const api = {

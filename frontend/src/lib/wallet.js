@@ -1,5 +1,4 @@
 import { ethers } from "ethers";
-import EthereumProvider from "@walletconnect/ethereum-provider";
 
 export const QIE_MAINNET = {
   chainId: 1990,
@@ -19,6 +18,8 @@ const WALLETCONNECT_PROJECT_ID = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID 
 const WALLETCONNECT_ID = "walletconnect";
 let activeWalletConnectProvider = null;
 const eip6963Providers = [];
+const eip6963ProviderInfo = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+let eip6963RequestInFlight = false;
 
 const WALLET_PRIORITIES = {
   qie: 0,
@@ -29,20 +30,26 @@ const WALLET_PRIORITIES = {
 
 function registerEip6963Provider(event) {
   const provider = event?.detail?.provider;
-  if (provider && !eip6963Providers.includes(provider)) {
+  const info = event?.detail?.info || {};
+  if (!provider) return;
+
+  eip6963ProviderInfo?.set(provider, info);
+  const providerKey = getProviderIdentity(provider, info);
+  const providerKnown = eip6963Providers.some((knownProvider) => (
+    knownProvider === provider || getProviderIdentity(knownProvider) === providerKey
+  ));
+  if (!providerKnown) {
     eip6963Providers.push(provider);
   }
 }
 
 if (typeof window !== "undefined") {
   window.addEventListener?.("eip6963:announceProvider", registerEip6963Provider);
-  window.dispatchEvent?.(new Event("eip6963:requestProvider"));
 }
 
 function getInjectedProviders() {
   if (typeof window === "undefined") return [];
   const detected = [];
-  window.dispatchEvent?.(new Event("eip6963:requestProvider"));
   detected.push(...eip6963Providers);
   if (Array.isArray(window.ethereum?.providers)) {
     detected.push(...window.ethereum.providers);
@@ -70,9 +77,41 @@ function getInjectedProviders() {
   return detected.filter((provider, index, providers) => provider && providers.indexOf(provider) === index);
 }
 
+export function requestWalletProviderDiscovery() {
+  if (typeof window === "undefined" || eip6963RequestInFlight) return;
+  eip6963RequestInFlight = true;
+  window.setTimeout(() => {
+    try {
+      window.dispatchEvent?.(new Event("eip6963:requestProvider"));
+    } catch (_error) {
+      // Provider discovery must never block rendering.
+    } finally {
+      window.setTimeout(() => {
+        eip6963RequestInFlight = false;
+      }, 250);
+    }
+  }, 0);
+}
+
+function getProviderInfo(provider) {
+  return provider?.info || provider?.providerInfo || eip6963ProviderInfo?.get(provider) || {};
+}
+
+function getProviderIdentity(provider, info = getProviderInfo(provider)) {
+  const uuid = info?.uuid || provider?.uuid;
+  if (uuid) return `uuid:${uuid}`;
+
+  const rdns = info?.rdns || provider?.rdns;
+  const name = info?.name || provider?.walletName || provider?.name;
+  if (rdns || name) return `info:${rdns || ""}:${name || ""}`;
+
+  return provider;
+}
+
 function isQieProvider(provider) {
-  const rdns = provider?.info?.rdns || provider?.providerInfo?.rdns || "";
-  const name = provider?.info?.name || provider?.providerInfo?.name || provider?.walletName || provider?.name || "";
+  const info = getProviderInfo(provider);
+  const rdns = info?.rdns || provider?.rdns || "";
+  const name = info?.name || provider?.walletName || provider?.name || "";
   return Boolean(
     provider?.isQIE ||
       provider?.isQie ||
@@ -94,11 +133,14 @@ function providerLabel(type, index) {
 }
 
 function providerKind(provider, index) {
+  const info = getProviderInfo(provider);
+  const rdns = String(info?.rdns || provider?.rdns || "").toLowerCase();
+  const name = String(info?.name || provider?.walletName || provider?.name || "").toLowerCase();
   if (isQieProvider(provider)) return "qie";
-  if (provider.isRabby) return "rabby";
-  if (provider.isMetaMask) return "metamask";
-  if (provider.isCoinbaseWallet) return "coinbase";
-  if (provider.isTrust) return "trust";
+  if (provider.isRabby || rdns.includes("rabby") || name.includes("rabby")) return "rabby";
+  if (provider.isMetaMask || rdns.includes("metamask") || name.includes("metamask")) return "metamask";
+  if (provider.isCoinbaseWallet || rdns.includes("coinbase") || name.includes("coinbase")) return "coinbase";
+  if (provider.isTrust || rdns.includes("trust") || name.includes("trust")) return "trust";
   return `injected-${index}`;
 }
 
@@ -218,6 +260,7 @@ async function createWalletConnectProvider() {
     throw new Error("REACT_APP_WALLETCONNECT_PROJECT_ID is required for WalletConnect.");
   }
 
+  const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
   const provider = await EthereumProvider.init({
     projectId: WALLETCONNECT_PROJECT_ID,
     chains: [QIE_MAINNET.chainId],

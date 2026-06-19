@@ -14,6 +14,8 @@ import {
 } from "../lib/qiedex";
 
 const QUSDC_DECIMALS = Number(process.env.REACT_APP_QUSDC_DECIMALS || "6");
+const EMPTY_ADDRESSES = {};
+const EMPTY_BALANCES = {};
 
 function browserProvider(rawProvider) {
   return rawProvider ? new ethers.BrowserProvider(rawProvider) : null;
@@ -36,8 +38,8 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
   const [success, setSuccess] = useState(null);
 
   const tokens = useMemo(
-    () => makeSwapTokens(deployment?.addresses || {}),
-    [deployment]
+    () => makeSwapTokens(deployment?.addresses || EMPTY_ADDRESSES),
+    [deployment?.addresses]
   );
   const selectedToken = useMemo(
     () => tokens.find((token) => token.id === selectedTokenId) || tokens[0] || null,
@@ -62,8 +64,8 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
 
   const refreshBalances = useCallback(async () => {
     if (!wallet?.connected || !wallet?.isQieMainnet || !provider || !wallet?.address) {
-      setBalances({});
-      return {};
+      setBalances((current) => (Object.keys(current).length === 0 ? current : EMPTY_BALANCES));
+      return EMPTY_BALANCES;
     }
 
     setLoadingBalances(true);

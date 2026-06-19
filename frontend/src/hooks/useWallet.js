@@ -8,6 +8,7 @@ import {
   getWalletProviders,
   openFaucet,
   QIE_MAINNET,
+  requestWalletProviderDiscovery,
   shortenAddress,
   switchToQieMainnet,
 } from "../lib/wallet";
@@ -40,12 +41,20 @@ function normalizeChainId(chainId) {
   return null;
 }
 
+function providerSignature(providers) {
+  return providers.map((provider) => provider.id).join("|");
+}
+
 function useWalletController() {
   const [state, setState] = useState(INITIAL_STATE);
 
   const refreshProviders = useCallback(() => {
     const providers = getWalletProviders();
-    setState((s) => ({ ...s, providers }));
+    setState((s) => (
+      providerSignature(s.providers) === providerSignature(providers)
+        ? s
+        : { ...s, providers }
+    ));
     return providers;
   }, []);
 
@@ -61,10 +70,16 @@ function useWalletController() {
     if (typeof window === "undefined") return undefined;
     const handleProviderAnnounced = () => refreshProviders();
     window.addEventListener?.("eip6963:announceProvider", handleProviderAnnounced);
-    window.dispatchEvent?.(new Event("eip6963:requestProvider"));
     return () => {
       window.removeEventListener?.("eip6963:announceProvider", handleProviderAnnounced);
     };
+  }, [refreshProviders]);
+
+  const discoverProviders = useCallback(() => {
+    const providers = refreshProviders();
+    requestWalletProviderDiscovery();
+    window.setTimeout(() => refreshProviders(), 300);
+    return providers;
   }, [refreshProviders]);
 
   const disconnect = useCallback(async () => {
@@ -154,6 +169,7 @@ function useWalletController() {
     copy,
     disconnect,
     openFaucet,
+    discoverProviders,
     refreshProviders,
     switchNetwork,
   }), [
@@ -161,6 +177,7 @@ function useWalletController() {
     connect,
     copy,
     disconnect,
+    discoverProviders,
     refreshProviders,
     switchNetwork,
   ]);

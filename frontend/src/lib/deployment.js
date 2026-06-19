@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 
 export const QIE_MAINNET_CHAIN_ID = 1990;
 export const DEPLOYMENT_URL = process.env.REACT_APP_DEPLOYMENT_URL || "/deployments/qie-mainnet.json";
+const DEPLOYMENT_TIMEOUT_MS = Number(process.env.REACT_APP_DEPLOYMENT_TIMEOUT_MS || 10000);
 
 const ZERO_ADDRESS = ethers.ZeroAddress.toLowerCase();
 
@@ -67,10 +68,26 @@ export function normalizeDeployment(deployment) {
 }
 
 export async function loadDeployment(url = DEPLOYMENT_URL) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Unable to load SpendGrid deployment artifact from ${url}`);
-  }
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), DEPLOYMENT_TIMEOUT_MS)
+    : null;
 
-  return normalizeDeployment(await response.json());
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller?.signal });
+    if (!response.ok) {
+      throw new Error(`Unable to load SpendGrid deployment artifact from ${url}`);
+    }
+
+    return normalizeDeployment(await response.json());
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Timed out loading SpendGrid deployment artifact from ${url}`);
+    }
+    throw error;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }

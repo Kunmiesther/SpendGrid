@@ -17,13 +17,13 @@ export default function Nav() {
     connect,
     copy,
     copied,
+    discoverProviders,
     disconnect,
     error,
     isQieMainnet,
     loading,
     openFaucet,
     providers,
-    refreshProviders,
     switchNetwork,
   } = useWallet();
   const [scrolled, setScrolled] = useState(false);
@@ -66,7 +66,7 @@ export default function Nav() {
           <div className="relative">
             <button
               onClick={() => {
-                refreshProviders();
+                discoverProviders();
                 setWalletOpen((open) => (connected ? !open : true));
               }}
               disabled={loading}
