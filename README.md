@@ -960,7 +960,7 @@ SpendGrid now runs against QIE Mainnet instead of Testnet. The frontend, backend
 
 # Live Deployment
 
-https://your-vercel-url.vercel.app
+[spendgridlabs](https://spendgridlabs.vercel.app/)
 
 ---
 
