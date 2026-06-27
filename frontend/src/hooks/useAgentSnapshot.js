@@ -15,6 +15,9 @@ function normalizeSnapshot(payload) {
   const balances = source.balances || {};
   const metrics = source.metrics || {};
   const qiePass = source.qiePass || {};
+  const settings = source.settings || {};
+  const analytics = source.analytics || {};
+  const pendingApprovals = Array.isArray(source.pendingApprovals) ? source.pendingApprovals : [];
 
   return {
     ...source,
@@ -69,8 +72,45 @@ function normalizeSnapshot(payload) {
       intentsExecuted: asNumber(metrics.intentsExecuted),
       intentsRejected: asNumber(metrics.intentsRejected),
       intentsFailed: asNumber(metrics.intentsFailed),
-      totalSpent: metrics.totalSpent || "0"
+      totalPayments: asNumber(metrics.totalPayments),
+      paymentsToday: asNumber(metrics.paymentsToday),
+      failedValidations: asNumber(metrics.failedValidations),
+      successRate: metrics.successRate ?? null,
+      successfulPayments: asNumber(metrics.successfulPayments),
+      failedPayments: asNumber(metrics.failedPayments),
+      largestPayment: metrics.largestPayment || "0",
+      largestPaymentWei: metrics.largestPaymentWei || "0",
+      averagePayment: metrics.averagePayment || metrics.averagePaymentSize || "0",
+      averagePaymentWei: metrics.averagePaymentWei || "0",
+      averagePaymentSize: metrics.averagePaymentSize || "0",
+      totalSpent: metrics.totalSpent || "0",
+      totalQusdcSpent: metrics.totalQusdcSpent || metrics.totalSpent || "0",
+      currentDailyBudgetRemaining: metrics.currentDailyBudgetRemaining || budget.remaining || "0",
+      pendingApprovals: asNumber(metrics.pendingApprovals)
     },
+    analytics: {
+      ...analytics,
+      totalPayments: asNumber(analytics.totalPayments),
+      totalQusdcSpent: analytics.totalQusdcSpent || metrics.totalSpent || "0",
+      paymentsToday: asNumber(analytics.paymentsToday),
+      successRate: analytics.successRate ?? metrics.successRate ?? null,
+      failedValidations: asNumber(analytics.failedValidations),
+      successfulPayments: asNumber(analytics.successfulPayments || metrics.successfulPayments),
+      failedPayments: asNumber(analytics.failedPayments || metrics.failedPayments),
+      largestPayment: analytics.largestPayment || metrics.largestPayment || "0",
+      averagePayment: analytics.averagePayment || analytics.averagePaymentSize || metrics.averagePayment || metrics.averagePaymentSize || "0",
+      averagePaymentSize: analytics.averagePaymentSize || metrics.averagePaymentSize || "0",
+      currentDailyBudgetRemaining: analytics.currentDailyBudgetRemaining || budget.remaining || "0"
+    },
+    settings: {
+      manualApprovalEnabled: Boolean(settings.manualApprovalEnabled),
+      manualApprovalThresholdWei: settings.manualApprovalThresholdWei || null,
+      maxPaymentAmountWei: settings.maxPaymentAmountWei || null,
+      maxPaymentsPerDay: settings.maxPaymentsPerDay ?? null,
+      whitelistRecipients: Array.isArray(settings.whitelistRecipients) ? settings.whitelistRecipients : [],
+      riskOverride: settings.riskOverride || null
+    },
+    pendingApprovals: pendingApprovals,
     history: {
       runtime: Array.isArray(source.history?.runtime) ? source.history.runtime : [],
       intents: Array.isArray(source.history?.intents) ? source.history.intents : [],

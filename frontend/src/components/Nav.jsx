@@ -88,14 +88,15 @@ export default function Nav() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute right-0 mt-2 w-48 bg-surface-1 border border-wire rounded-sm overflow-hidden"
+                  className="absolute right-0 mt-2 w-[min(18rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden bg-surface-1 border border-wire rounded-sm"
                 >
                   {!connected &&
                     providers.map((wallet) => (
                       <button
                         key={wallet.id}
                         onClick={() => connect(wallet.id).then(() => setWalletOpen(false)).catch(() => {})}
-                        className="w-full text-left px-4 py-3 border-b border-wire last:border-b-0 text-body-sm text-ink-1 hover:bg-surface-2 transition-colors"
+                        disabled={loading}
+                        className="w-full text-left px-4 py-3 border-b border-wire last:border-b-0 text-body-sm text-ink-1 hover:bg-surface-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <span className="block">{wallet.label}</span>
                         {wallet.subtitle && (

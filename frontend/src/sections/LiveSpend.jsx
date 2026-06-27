@@ -2,16 +2,16 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useInView } from "../hooks/useInView";
 import { useLiveSpend } from "../hooks/useLiveSpend";
-
-const QIE_TX_EXPLORER_URL = "https://mainnet.qie.digital/tx/";
+import { getQieTxExplorerUrl } from "../lib/explorer";
 
 function SpendStat({ label, value, mono = true, accent = false }) {
+  const animatedKey = typeof value === "string" || typeof value === "number" ? String(value) : label;
   return (
     <div className="border-b border-wire last:border-b-0 py-6 first:pt-0">
       <p className="stat-label mb-2">{label}</p>
       <AnimatePresence mode="wait">
         <motion.p
-          key={value}
+          key={animatedKey}
           initial={{ opacity: 0.5 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.25 }}
@@ -29,12 +29,12 @@ function shortHash(hash) {
   return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
 }
 
-function TxHashLink({ hash }) {
+function TxHashLink({ hash, network }) {
   if (!hash) return "None";
 
   return (
     <a
-      href={`${QIE_TX_EXPLORER_URL}${hash}`}
+      href={getQieTxExplorerUrl(network, hash)}
       target="_blank"
       rel="noopener noreferrer"
       className="hover:text-ink-0 transition-colors underline decoration-wire underline-offset-4"
@@ -82,6 +82,7 @@ export default function LiveSpend() {
     remaining,
     txCount,
   } = useLiveSpend();
+  const network = snapshot.network || {};
 
   const fmt = (n) =>
     n.toLocaleString(undefined, {
@@ -145,7 +146,7 @@ export default function LiveSpend() {
             <SpendStat label="Last policy decision" value={decisionLabel} mono={false} />
             <SpendStat label="Latest validation" value={validationLabel} mono={false} />
             <SpendStat label="Latest execution" value={executionLabel} mono={false} />
-            <SpendStat label="Last transaction hash" value={<TxHashLink hash={lastTransactionHash} />} />
+            <SpendStat label="Last transaction hash" value={<TxHashLink hash={lastTransactionHash} network={network} />} />
             <SpendStat label="Payments processed" value={fmt(txCount)} />
             <SpendStat label="Intents received" value={fmt(intentCount)} />
             <SpendStat label="QIE Pass" value={snapshot.qiePass?.status || "unknown"} mono={false} />

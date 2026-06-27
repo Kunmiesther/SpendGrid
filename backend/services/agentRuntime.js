@@ -16,6 +16,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function startOfUtcDay(date = new Date()) {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
 function toPositiveBigInt(value, label) {
   if (value === undefined || value === null || value === "") {
     throw new Error(`${label} is required`);
@@ -95,6 +99,131 @@ function normalizeMetadata(value) {
   }
 
   return value;
+}
+
+function normalizeAddressList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeAddress(item))
+    .filter(Boolean);
+}
+
+function normalizePolicy(input = {}) {
+  const source = input && typeof input === "object" ? input : {};
+  const parseMaybeBigInt = (value, label) => {
+    if (value === undefined || value === null || value === "") return null;
+    try {
+      const parsed = BigInt(value);
+      if (parsed < 0n) {
+        throw new Error(`${label} must be greater than or equal to zero`);
+      }
+      return parsed;
+    } catch (error) {
+      throw makeValidationError("INVALID_POLICY", error.message, { field: label, value }, 400);
+    }
+  };
+
+  return {
+    manualApprovalEnabled: Boolean(source.manualApprovalEnabled),
+    manualApprovalThresholdWei: parseMaybeBigInt(source.manualApprovalThresholdWei, "manualApprovalThresholdWei"),
+    maxPaymentAmountWei: parseMaybeBigInt(source.maxPaymentAmountWei, "maxPaymentAmountWei"),
+    maxPaymentsPerDay: source.maxPaymentsPerDay === undefined || source.maxPaymentsPerDay === null || source.maxPaymentsPerDay === ""
+      ? null
+      : Number(source.maxPaymentsPerDay),
+    whitelistRecipients: normalizeAddressList(source.whitelistRecipients),
+    riskOverride: typeof source.riskOverride === "string" ? source.riskOverride.toUpperCase() : null
+  };
+}
+
+function summarizeReason(value) {
+  if (!value) return "unavailable";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.join(", ");
+  return JSON.stringify(value);
+}
+
+function intentCountOnUtcDay(records, agentId, statuses = null, date = new Date()) {
+  const dayStart = startOfUtcDay(date);
+  const targetAgentId = String(agentId);
+  const statusSet = Array.isArray(statuses) ? new Set(statuses) : null;
+
+  return records.reduce((total, record) => {
+    if (String(record.agentId) !== targetAgentId) return total;
+    if (statusSet && !statusSet.has(record.status)) return total;
+    const timestamp = new Date(record.completedAt || record.timestamp || record.startedAt || 0).getTime();
+    if (timestamp < dayStart) return total;
+    return total + 1;
+  }, 0);
+}
+
+function buildIntentTimeline(record) {
+  const validation = record.validation || {};
+  const approval = record.approval || {};
+  const execution = record.execution || {};
+  const timeline = [];
+  const baseTime = record.receivedAt || record.timestamp || record.startedAt || record.completedAt || nowIso();
+
+  timeline.push({
+    stage: "Intent Created",
+    status: record.status === "rejected" && record.validation ? "rejected" : "done",
+    timestamp: record.startedAt || record.timestamp || baseTime,
+    detail: `Recipient ${record.intent?.recipient || record.recipient || "unavailable"} for ${record.intent?.amount || record.amount || "0"} QUSDC`
+  });
+
+  timeline.push({
+    stage: "Policy Validation",
+    status: validation.status || (record.status === "rejected" ? "rejected" : "done"),
+    timestamp: validation.timestamp || record.validationAt || record.completedAt || record.timestamp || baseTime,
+    detail: validation.reason || validation.reasons?.join(", ") || "Policy checks completed"
+  });
+
+  timeline.push({
+    stage: "Budget Check",
+    status: validation.status === "rejected" && validation.reasons?.includes("DAILY_LIMIT_EXCEEDED") ? "blocked" : "done",
+    timestamp: validation.timestamp || record.validationAt || record.completedAt || record.timestamp || baseTime,
+    detail: validation.budget?.limitingConstraint ? `Limiting constraint: ${validation.budget.limitingConstraint}` : "Budget checks completed"
+  });
+
+  timeline.push({
+    stage: "QIE Pass Verification",
+    status: validation.status === "rejected" && validation.reasons?.includes("QIE_PASS_INVALID") ? "blocked" : "done",
+    timestamp: validation.timestamp || record.validationAt || record.completedAt || record.timestamp || baseTime,
+    detail: validation.qiePass ? `Pass status: ${validation.qiePass.verified ? "verified" : validation.qiePass.status || "unknown"}` : "QIE Pass checks completed"
+  });
+
+  timeline.push({
+    stage: "Liquidity Check",
+    status: validation.status === "rejected" && validation.reasons?.includes("LIQUIDITY_UNAVAILABLE") ? "blocked" : "done",
+    timestamp: validation.timestamp || record.validationAt || record.completedAt || record.timestamp || baseTime,
+    detail: validation.liquidity?.reason || "Liquidity checks completed"
+  });
+
+  timeline.push({
+    stage: approval?.required ? "Pending Approval" : "Approved",
+    status: approval?.status || (record.status === "pending_approval" ? "pending" : record.status === "rejected" ? "rejected" : "done"),
+    timestamp: approval?.requestedAt || record.approvalRequestedAt || record.completedAt || record.timestamp || baseTime,
+    detail: approval?.reason || (approval?.required ? "Waiting for manual approval" : "Auto-approved")
+  });
+
+  if (execution?.status || record.transaction) {
+    timeline.push({
+      stage: "Executed",
+      status: execution?.status || (record.status === "executed" ? "done" : record.status === "failed" ? "failed" : "unknown"),
+      timestamp: execution?.completedAt || record.completedAt || record.timestamp || baseTime,
+      detail: execution?.reason || record.transaction?.executePayment?.txHash || record.transaction?.txHash || "Execution complete"
+    });
+  }
+
+  if (record.status === "executed" || record.status === "failed" || record.status === "rejected" || record.status === "pending_approval") {
+    timeline.push({
+      stage: "Completed",
+      status: record.status,
+      timestamp: record.completedAt || record.approvalCompletedAt || record.timestamp || baseTime,
+      detail: record.error || execution?.message || approval?.status || `Intent ${record.status}`
+    });
+  }
+
+  return timeline;
 }
 
 function sameAddress(left, right) {
@@ -241,6 +370,9 @@ class AgentRuntime {
     this.currentRun = null;
     this.history = [];
     this.intentHistory = [];
+    this.pendingApprovals = new Map();
+    this.intentDedupWindowMs = Number(options.intentDedupWindowMs || process.env.PAYMENT_INTENT_DEDUP_WINDOW_MS || 15000);
+    this.policy = normalizePolicy(options.policy || {});
     this.allowanceCache = options.allowanceCache || new Map();
     this.allowanceManager = options.allowanceManager || new AllowanceManager({
       cache: this.allowanceCache,
@@ -272,13 +404,38 @@ class AgentRuntime {
     return this.intentHistory.slice(0, safeLimit);
   }
 
+  getPendingApprovals(limit = 50) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 500);
+    return Array.from(this.pendingApprovals.values())
+      .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0))
+      .slice(0, safeLimit)
+      .map((record) => bigintJson(record));
+  }
+
   getStatus() {
     return {
       status: this.status,
       totalRuns: this.history.length,
       totalIntents: this.intentHistory.length,
-      lastRun: this.history[0] || null
+      pendingApprovals: this.pendingApprovals.size,
+      lastRun: this.history[0] || null,
+      policy: this.getPolicy()
     };
+  }
+
+  getPolicy() {
+    return bigintJson({
+      ...this.policy,
+      whitelistRecipients: [...(this.policy.whitelistRecipients || [])]
+    });
+  }
+
+  setPolicy(policy = {}) {
+    this.policy = normalizePolicy({
+      ...this.policy,
+      ...policy
+    });
+    return this.getPolicy();
   }
 
   async _submitPaymentIntent(input) {
@@ -335,7 +492,32 @@ class AgentRuntime {
       });
     }
 
+    const fingerprint = this._buildPaymentIntentFingerprint(intent);
+    const duplicate = fingerprint ? this._findRecentPaymentIntentByFingerprint(fingerprint) : null;
+    if (duplicate) {
+      return bigintJson({
+        ok: true,
+        accepted: true,
+        duplicate: true,
+        status: "duplicate",
+        originalStatus: duplicate.status || null,
+        intentId: duplicate.intentId || null,
+        runId: duplicate.runId || null,
+        agentId: duplicate.agentId || null,
+        validation: duplicate.validation || null,
+        decision: duplicate.decision || null,
+        approval: duplicate.approval || null,
+        transaction: duplicate.transaction || null,
+        message: duplicate.status === "executed"
+          ? "Duplicate payment intent ignored; the same payment already executed."
+          : duplicate.status === "pending_approval"
+            ? "Duplicate payment intent ignored; the same payment is already pending approval."
+            : "Duplicate payment intent ignored; an identical payment intent already exists."
+      });
+    }
+
     this.status = "validating_intent";
+    const policy = intent.policy || this.getPolicy();
     this.currentRun = {
       runId,
       intentId: intent.intentId,
@@ -354,10 +536,13 @@ class AgentRuntime {
       startedAt,
       timestamp: startedAt,
       status: "received",
+      fingerprint,
       intent: this._publicIntent(intent),
       validation: null,
       decision: null,
       budget: null,
+      approval: null,
+      timeline: [],
       transaction: null,
       error: null
     };
@@ -371,10 +556,30 @@ class AgentRuntime {
       record.validation = evaluation.validation;
       record.budget = evaluation.context.budget;
       record.decision = evaluation.decision;
+      record.approval = {
+        required: Boolean(evaluation.requiresApproval),
+        status: evaluation.requiresApproval ? "pending" : "approved",
+        thresholdWei: evaluation.validation?.policy?.manualApprovalThresholdWei || policy.manualApprovalThresholdWei || null,
+        mode: evaluation.validation?.policy?.manualApprovalEnabled ?? Boolean(policy.manualApprovalEnabled),
+        reason: evaluation.requiresApproval
+          ? "Manual approval required before execution."
+          : "Intent approved for execution."
+      };
+      record.timeline = buildIntentTimeline({
+        ...record,
+        validation: evaluation.validation,
+        approval: record.approval
+      });
 
       if (!evaluation.accepted) {
         record.status = "rejected";
         record.completedAt = nowIso();
+        record.timeline = buildIntentTimeline({
+          ...record,
+          status: "rejected",
+          completedAt: record.completedAt,
+          approval: record.approval
+        });
         this._replaceIntent(record);
         runtime.ledger?.append?.({
           eventType: "payment_intent",
@@ -399,6 +604,47 @@ class AgentRuntime {
         });
       }
 
+      if (evaluation.requiresApproval) {
+        record.status = "pending_approval";
+        record.approval = {
+          ...record.approval,
+          status: "pending",
+          requestedAt: nowIso(),
+          reason: record.approval.reason
+        };
+        record.timeline = buildIntentTimeline({
+          ...record,
+          status: "pending_approval",
+          approval: record.approval
+        });
+        this._pendingApprovalsUpsert(record);
+        this._replaceIntent(record);
+        runtime.ledger?.append?.({
+          eventType: "payment_intent",
+          status: "pending_approval",
+          runId,
+          intentId: intent.intentId,
+          agentId: intent.agentId,
+          intent: this._publicIntent(intent),
+          validation: evaluation.validation,
+          decision: evaluation.decision,
+          approval: record.approval
+        });
+
+        return bigintJson({
+          ok: true,
+          accepted: true,
+          status: "pending_approval",
+          intentId: intent.intentId,
+          runId,
+          agentId: intent.agentId,
+          validation: evaluation.validation,
+          decision: evaluation.decision,
+          approval: record.approval,
+          pendingApproval: true
+        });
+      }
+
       this.status = "executing_intent";
       validationPassed = true;
       const spendPlan = await this._planSpend(runtime, intent.agentId, intent.amountWei, {
@@ -418,7 +664,17 @@ class AgentRuntime {
       record.transaction = txRecord;
       record.status = "executed";
       record.completedAt = nowIso();
+      record.timeline = buildIntentTimeline({
+        ...record,
+        completedAt: record.completedAt,
+        execution: {
+          status: "confirmed",
+          completedAt: record.completedAt,
+          reason: "Payment intent executed successfully."
+        }
+      });
       this._replaceIntent(record);
+      this._pendingApprovalsDelete(intent.intentId);
 
       runtime.ledger?.append?.({
         eventType: "payment_intent",
@@ -458,7 +714,15 @@ class AgentRuntime {
           }
         : null;
       record.completedAt = nowIso();
+      record.timeline = buildIntentTimeline({
+        ...record,
+        completedAt: record.completedAt,
+        execution: record.execution
+      });
       this._replaceIntent(record);
+      if (record.status !== "pending_approval") {
+        this._pendingApprovalsDelete(intent.intentId);
+      }
 
       try {
         const runtime = await this.getBlockchainRuntime();
@@ -491,6 +755,176 @@ class AgentRuntime {
       this.status = "idle";
       this.currentRun = null;
     }
+  }
+
+  async previewPaymentIntent(input) {
+    const intent = this._normalizePaymentIntent(input);
+    const runtime = await this.getBlockchainRuntime();
+    const evaluation = await this._evaluatePaymentIntent(runtime, intent, { recordLedger: false, previewOnly: true });
+    return bigintJson(this._buildIntentPreview(intent, evaluation));
+  }
+
+  async approvePaymentIntent(intentId, input = {}) {
+    const key = String(intentId || "");
+    const pending = this.pendingApprovals.get(key);
+    if (!pending) {
+      throw makeValidationError("INTENT_NOT_PENDING", `intent ${key || "unknown"} is not pending approval`, { intentId: key }, 404);
+    }
+
+    const runtime = await this.getBlockchainRuntime();
+    const evaluation = await this._evaluatePaymentIntent(runtime, pending.intent, { recordLedger: false, previewOnly: false });
+    pending.record.validation = evaluation.validation;
+    pending.record.decision = evaluation.decision;
+    pending.record.budget = evaluation.context.budget;
+
+    if (!evaluation.accepted) {
+      pending.record.status = "rejected";
+      pending.record.error = evaluation.validation?.reason || "INTENT_REJECTED";
+      pending.record.completedAt = nowIso();
+      pending.record.execution = {
+        status: "failed",
+        reason: pending.record.error,
+        message: "Validation failed during approval."
+      };
+      pending.record.approval = {
+        ...pending.record.approval,
+        status: "rejected",
+        completedAt: pending.record.completedAt,
+        reason: pending.record.error
+      };
+      pending.record.timeline = buildIntentTimeline(pending.record);
+      this._replaceIntent(pending.record);
+      this._pendingApprovalsDelete(key);
+      return bigintJson({
+        ok: false,
+        accepted: false,
+        status: "rejected",
+        intentId: pending.record.intentId,
+        validation: evaluation.validation,
+        decision: evaluation.decision,
+        error: pending.record.error
+      });
+    }
+
+    this.status = "executing_intent";
+    this.currentRun = {
+      runId: pending.record.runId,
+      intentId: pending.record.intentId,
+      agentId: pending.intent.agentId.toString(),
+      startedAt: pending.record.startedAt,
+      type: "payment_intent_approval"
+    };
+
+    try {
+      const spendPlan = await this._planSpend(runtime, pending.intent.agentId, pending.intent.amountWei, {
+        receiver: pending.intent.recipient,
+        streamId: pending.intent.streamId,
+        task: pending.record.task
+      });
+      await this._assertBackendLimit(evaluation.context, spendPlan.amountWei);
+      await this._assertOnChainLimit(runtime, pending.intent.agentId, spendPlan.amountWei);
+
+      const txRecord = await this._executeSpend(runtime, pending.intent.agentId, spendPlan, {
+        receiver: pending.intent.recipient,
+        streamId: pending.intent.streamId,
+        task: pending.record.task,
+        intentId: pending.intent.intentId
+      });
+      pending.record.transaction = txRecord;
+      pending.record.status = "executed";
+      pending.record.completedAt = nowIso();
+      pending.record.approval = {
+        ...pending.record.approval,
+        status: "approved",
+        completedAt: pending.record.completedAt,
+        approvedBy: input?.approvedBy || null,
+        reason: input?.reason || "Approved by user"
+      };
+      pending.record.execution = {
+        status: "confirmed",
+        reason: "Payment intent executed after human approval.",
+        txHash: txRecord.executePayment?.txHash || txRecord.txHash || null
+      };
+      pending.record.timeline = buildIntentTimeline(pending.record);
+      this._replaceIntent(pending.record);
+      this._pendingApprovalsDelete(key);
+
+      runtime.ledger?.append?.({
+        eventType: "payment_intent",
+        status: "executed",
+        intentId: pending.intent.intentId,
+        agentId: pending.intent.agentId,
+        intent: this._publicIntent(pending.intent),
+        validation: evaluation.validation,
+        decision: evaluation.decision,
+        transaction: txRecord,
+        approval: pending.record.approval
+      });
+
+      return bigintJson({
+        ok: true,
+        accepted: true,
+        status: "executed",
+        intentId: pending.intent.intentId,
+        validation: evaluation.validation,
+        decision: evaluation.decision,
+        transaction: txRecord,
+        approval: pending.record.approval,
+        receipt: txRecord.executePayment || null
+      });
+    } catch (error) {
+      const rejection = this._normalizeIntentError(error);
+      pending.record.status = "failed";
+      pending.record.error = rejection.message;
+      pending.record.execution = {
+        status: "failed",
+        reason: rejection.reason,
+        message: rejection.message,
+        details: rejection.details || null
+      };
+      pending.record.completedAt = nowIso();
+      pending.record.timeline = buildIntentTimeline(pending.record);
+      this._replaceIntent(pending.record);
+      this._pendingApprovalsDelete(key);
+      throw error;
+    } finally {
+      this.status = "idle";
+      this.currentRun = null;
+    }
+  }
+
+  async rejectPaymentIntent(intentId, input = {}) {
+    const key = String(intentId || "");
+    const pending = this.pendingApprovals.get(key);
+    if (!pending) {
+      throw makeValidationError("INTENT_NOT_PENDING", `intent ${key || "unknown"} is not pending approval`, { intentId: key }, 404);
+    }
+
+    pending.record.status = "rejected";
+    pending.record.error = input?.reason || "Rejected by user";
+    pending.record.completedAt = nowIso();
+    pending.record.approval = {
+      ...pending.record.approval,
+      status: "rejected",
+      completedAt: pending.record.completedAt,
+      reason: pending.record.error
+    };
+    pending.record.execution = {
+      status: "failed",
+      reason: "INTENT_REJECTED",
+      message: pending.record.error
+    };
+    pending.record.timeline = buildIntentTimeline(pending.record);
+    this._replaceIntent(pending.record);
+    this._pendingApprovalsDelete(key);
+    return bigintJson({
+      ok: true,
+      accepted: false,
+      status: "rejected",
+      intentId: pending.record.intentId,
+      approval: pending.record.approval,
+      error: pending.record.error
+    });
   }
 
   async _run(input) {
@@ -623,6 +1057,8 @@ class AgentRuntime {
       throw makeValidationError("INVALID_STREAM_ID", error.message, { streamId: input.streamId }, 400);
     }
 
+    const policy = normalizePolicy(input.policy || {});
+
     return {
       intentId: input.intentId || input.id || crypto.randomUUID(),
       recipient,
@@ -630,9 +1066,64 @@ class AgentRuntime {
       amount: ethers.formatUnits(amountWei, 18),
       agentId,
       streamId,
+      policy,
       metadata: normalizeMetadata(input.metadata),
       receivedAt: nowIso()
     };
+  }
+
+  _buildPaymentIntentFingerprint(intentOrInput = {}) {
+    try {
+      const source = intentOrInput && typeof intentOrInput === "object" ? intentOrInput : {};
+      const recipient = normalizeAddress(source.recipient || source.receiver);
+      const agentId = source.agentId === undefined || source.agentId === null || source.agentId === ""
+        ? toPositiveBigInt(this.defaultAgentId, "agentId")
+        : toPositiveBigInt(source.agentId, "agentId");
+      const amountWei = source.amountWei !== undefined && source.amountWei !== null && source.amountWei !== ""
+        ? toPositiveBigInt(source.amountWei, "amountWei")
+        : parseQieToWei(
+          source.amount === undefined || source.amount === null || source.amount === ""
+            ? this.defaultPaymentIntentAmount
+            : source.amount,
+          "amount"
+        );
+      const streamId = source.streamId === undefined || source.streamId === null || source.streamId === ""
+        ? "none"
+        : toPositiveBigInt(source.streamId, "streamId").toString();
+      const metadata = normalizeMetadata(source.metadata) || {};
+      const policy = normalizePolicy(source.policy || {});
+
+      return [
+        agentId.toString(),
+        recipient.toLowerCase(),
+        amountWei.toString(),
+        streamId,
+        metadata.task || "",
+        metadata.category || "",
+        metadata.description || "",
+        metadata.templateId || "",
+        policy.manualApprovalEnabled ? "1" : "0",
+        policy.manualApprovalThresholdWei || "",
+        policy.maxPaymentAmountWei || "",
+        policy.maxPaymentsPerDay || "",
+        (policy.whitelistRecipients || []).join(",")
+      ].join("|");
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  _findRecentPaymentIntentByFingerprint(fingerprint) {
+    if (!fingerprint || !this.intentDedupWindowMs) {
+      return null;
+    }
+
+    const cutoff = Date.now() - this.intentDedupWindowMs;
+    return this.intentHistory.find((record) => {
+      if (record.fingerprint !== fingerprint) return false;
+      const timestamp = new Date(record.startedAt || record.timestamp || record.completedAt || 0).getTime();
+      return Number.isFinite(timestamp) && timestamp >= cutoff;
+    }) || null;
   }
 
   _publicIntent(intent) {
@@ -643,14 +1134,17 @@ class AgentRuntime {
       amount: intent.amount,
       agentId: intent.agentId,
       streamId: intent.streamId,
+      policy: intent.policy || null,
       metadata: intent.metadata,
       receivedAt: intent.receivedAt
     });
   }
 
-  async _evaluatePaymentIntent(runtime, intent) {
+  async _evaluatePaymentIntent(runtime, intent, options = {}) {
     this._ensureRuntimeQusdc(runtime);
     const { contracts, ledger } = runtime;
+    const policy = normalizePolicy(intent.policy || this.policy);
+    const previewOnly = Boolean(options.previewOnly);
     let agent;
     try {
       agent = await contracts.registry.getAgent(intent.agentId);
@@ -684,6 +1178,24 @@ class AgentRuntime {
       passBound: BigInt(passBinding || 0) === BigInt(intent.agentId),
       vaultWhitelisted: Boolean(vaultWhitelisted)
     };
+    const todayStatuses = ["received", "pending_approval", "executed"];
+    const sameDayIntents = this.intentHistory.filter((record) => (
+      String(record.agentId) === String(intent.agentId)
+        && String(record.intentId) !== String(intent.intentId)
+        && todayStatuses.includes(record.status)
+        && new Date(record.completedAt || record.timestamp || record.startedAt || 0).getTime() >= startOfUtcDay()
+    ));
+    const maxPaymentsPerDay = Number.isFinite(Number(policy.maxPaymentsPerDay)) && Number(policy.maxPaymentsPerDay) > 0
+      ? Number(policy.maxPaymentsPerDay)
+      : null;
+    const recipientWhitelisted = policy.whitelistRecipients.length === 0
+      || policy.whitelistRecipients.some((allowed) => sameAddress(allowed, intent.recipient));
+    const maxPaymentAmountWei = policy.maxPaymentAmountWei ? BigInt(policy.maxPaymentAmountWei) : null;
+    const manualApprovalThresholdWei = policy.manualApprovalThresholdWei ? BigInt(policy.manualApprovalThresholdWei) : null;
+    const manualApprovalEnabled = Boolean(policy.manualApprovalEnabled);
+    const approvalRequired = manualApprovalEnabled && (
+      manualApprovalThresholdWei === null || intent.amountWei >= manualApprovalThresholdWei
+    );
     const checks = {
       agentExists: true,
       agentActive: Boolean(agent.active),
@@ -696,7 +1208,11 @@ class AgentRuntime {
       exceedsSafeSpendLimit: false,
       allowanceSufficient: vaultAllowance >= intent.amountWei,
       streamValid: false,
-      liquidityAvailable: false
+      liquidityAvailable: false,
+      recipientWhitelisted,
+      maxPaymentAmountExceeded: maxPaymentAmountWei !== null ? intent.amountWei > maxPaymentAmountWei : false,
+      maxPaymentsPerDayExceeded: maxPaymentsPerDay !== null ? sameDayIntents.length >= maxPaymentsPerDay : false,
+      manualApprovalRequired: approvalRequired
     };
     const stream = await this._inspectIntentStream(runtime, intent);
     checks.streamValid = Boolean(stream.valid);
@@ -716,6 +1232,9 @@ class AgentRuntime {
     if (!checks.qiePassValid) rejectionReasons.push("QIE_PASS_INVALID");
     if (!checks.operatorAuthorized) rejectionReasons.push("UNAUTHORIZED_AGENT_OPERATOR");
     if (checks.paused) rejectionReasons.push("AGENT_PAUSED");
+    if (!checks.recipientWhitelisted) rejectionReasons.push("RECIPIENT_NOT_WHITELISTED");
+    if (checks.maxPaymentAmountExceeded) rejectionReasons.push("MAX_PAYMENT_AMOUNT_EXCEEDED");
+    if (checks.maxPaymentsPerDayExceeded) rejectionReasons.push("MAX_PAYMENTS_PER_DAY_EXCEEDED");
     if (checks.notWhitelisted) rejectionReasons.push("SERVICE_NOT_WHITELISTED");
     if (checks.dailyLimitExceeded) rejectionReasons.push("DAILY_LIMIT_EXCEEDED");
     if (checks.controllerRejected) rejectionReasons.push("CONTROLLER_REJECTED");
@@ -729,7 +1248,10 @@ class AgentRuntime {
         dailyLimit,
         spentToday,
         remainingWei: budgetRemainingWei,
-        safeSpendLimitWei: BigInt(executionContext.safeSpendLimitWei || 0)
+        safeSpendLimitWei: BigInt(executionContext.safeSpendLimitWei || 0),
+        maxPaymentAmountWei: maxPaymentAmountWei?.toString?.() || null,
+        maxPaymentsPerDay,
+        maxPaymentsToday: sameDayIntents.length
       },
       operator: {
         vaultAllowance
@@ -746,6 +1268,14 @@ class AgentRuntime {
       checks,
       constraintFailures,
       qiePass,
+      policy: {
+        manualApprovalEnabled,
+        manualApprovalThresholdWei: manualApprovalThresholdWei?.toString?.() || null,
+        maxPaymentAmountWei: maxPaymentAmountWei?.toString?.() || null,
+        maxPaymentsPerDay,
+        whitelistRecipients: policy.whitelistRecipients
+      },
+      approvalRequired,
       budget: {
         dailyLimit,
         spentToday,
@@ -768,30 +1298,36 @@ class AgentRuntime {
     });
     const decision = {
       source: "agent_policy_engine",
-      action: accepted ? "approve" : "reject",
+      action: accepted ? (approvalRequired ? "pending_approval" : "approve") : "reject",
       amount: intent.amount,
       amountWei: intent.amountWei.toString(),
       reasoning: accepted
-        ? "Payment intent satisfies agent policy, QIE Pass, controller, budget, and liquidity checks."
+        ? (approvalRequired
+          ? "Payment intent satisfies validation rules and is awaiting human approval."
+          : "Payment intent satisfies agent policy, QIE Pass, controller, budget, and liquidity checks.")
         : `Payment intent rejected: ${constraintFailures[0]?.name || rejectionReasons[0]} ${constraintFailures[0]?.actual !== undefined ? `actual=${constraintFailures[0].actual} expected=${constraintFailures[0].expected}` : rejectionReasons.join(", ")}`
     };
 
-    ledger?.append?.({
-      eventType: "payment_intent_validation",
-      status: accepted ? "accepted" : "rejected",
-      intentId: intent.intentId,
-      agentId: intent.agentId,
-      recipient: intent.recipient,
-      amountWei: intent.amountWei,
-      validation,
-      decision
-    });
+    if (!previewOnly) {
+      ledger?.append?.({
+        eventType: "payment_intent_validation",
+        status: accepted ? "accepted" : "rejected",
+        intentId: intent.intentId,
+        agentId: intent.agentId,
+        recipient: intent.recipient,
+        amountWei: intent.amountWei,
+        validation,
+        decision
+      });
+    }
 
     return {
       accepted,
+      requiresApproval: approvalRequired,
       validation,
       decision,
-      context: executionContext
+      context: executionContext,
+      policy
     };
   }
 
@@ -861,6 +1397,13 @@ class AgentRuntime {
     if (!checks.qiePassValid) push("qiePassValid", true, false, "QIE_PASS_INVALID");
     if (!checks.operatorAuthorized) push("operatorAuthorized", true, false, "UNAUTHORIZED_AGENT_OPERATOR");
     if (checks.paused) push("paused", false, true, "AGENT_PAUSED");
+    if (!checks.recipientWhitelisted) push("recipientWhitelisted", true, false, "RECIPIENT_NOT_WHITELISTED");
+    if (checks.maxPaymentAmountExceeded) {
+      push("maxPaymentAmountWei", `>= ${intent.amountWei.toString()}`, budget.maxPaymentAmountWei || "unavailable", "MAX_PAYMENT_AMOUNT_EXCEEDED");
+    }
+    if (checks.maxPaymentsPerDayExceeded) {
+      push("maxPaymentsPerDay", `<= ${budget.maxPaymentsPerDay || 0}`, budget.maxPaymentsToday || "unavailable", "MAX_PAYMENTS_PER_DAY_EXCEEDED");
+    }
     if (checks.notWhitelisted) push("vaultWhitelisted", true, false, "SERVICE_NOT_WHITELISTED");
     if (checks.dailyLimitExceeded) {
       push("budgetRemainingWei", `>= ${intent.amountWei.toString()}`, budget.remainingWei, "DAILY_LIMIT_EXCEEDED");
@@ -875,6 +1418,101 @@ class AgentRuntime {
     }
 
     return failures;
+  }
+
+  _pendingApprovalsUpsert(record) {
+    const stored = bigintJson({
+      ...record,
+      updatedAt: nowIso()
+    });
+    this.pendingApprovals.set(String(record.intentId), stored);
+    return stored;
+  }
+
+  _pendingApprovalsDelete(intentId) {
+    this.pendingApprovals.delete(String(intentId));
+  }
+
+  async _estimateIntentGasFee(runtime) {
+    try {
+      const recentPayments = this.intentHistory
+        .filter((record) => record.status === "executed" && record.transaction?.executePayment?.gasUsed)
+        .slice(0, 10);
+      if (!recentPayments.length) {
+        return null;
+      }
+
+      const totalGasUsed = recentPayments.reduce((total, record) => total + BigInt(record.transaction.executePayment.gasUsed), 0n);
+      const averageGasUsed = totalGasUsed / BigInt(recentPayments.length);
+      const feeData = await runtime.contracts.provider.getFeeData().catch(() => null);
+      const gasPrice = feeData?.gasPrice || feeData?.maxFeePerGas || feeData?.lastBaseFeePerGas || null;
+      if (!gasPrice || averageGasUsed <= 0n) {
+        return null;
+      }
+
+      return {
+        gasUsed: averageGasUsed.toString(),
+        gasPrice: gasPrice.toString(),
+        feeWei: (averageGasUsed * BigInt(gasPrice)).toString(),
+        feeQie: ethers.formatUnits(averageGasUsed * BigInt(gasPrice), 18)
+      };
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async _buildIntentPreview(intent, evaluation) {
+    const runtime = await this.getBlockchainRuntime();
+    const budgetRemainingWei = BigInt(evaluation.context?.budget?.remainingWei || 0);
+    const dailyRemainingWei = BigInt(evaluation.validation?.budget?.controllerRemainingWei || evaluation.context?.budget?.remainingWei || 0);
+    const amountWei = BigInt(intent.amountWei || 0);
+    const budgetAfterWei = budgetRemainingWei > amountWei ? budgetRemainingWei - amountWei : 0n;
+    const dailyAfterWei = dailyRemainingWei > amountWei ? dailyRemainingWei - amountWei : 0n;
+    const gasEstimate = await this._estimateIntentGasFee(runtime);
+    const policy = evaluation.policy || intent.policy || this.getPolicy();
+    const currentPolicyStatus = evaluation.accepted
+      ? (evaluation.requiresApproval ? "Pending approval" : "Allowed")
+      : "Blocked";
+    const executionReadiness = evaluation.accepted
+      ? (evaluation.requiresApproval ? "Awaiting approval" : "Ready")
+      : "Blocked";
+    const budgetRatio = budgetRemainingWei > 0n ? Number((amountWei * 10000n) / budgetRemainingWei) / 100 : 100;
+    let riskLevel = "LOW";
+    if (!evaluation.accepted) {
+      riskLevel = "HIGH";
+    } else if (evaluation.requiresApproval || budgetRatio >= 50 || policy.riskOverride === "MEDIUM") {
+      riskLevel = "MEDIUM";
+    }
+    if (policy.riskOverride === "HIGH") {
+      riskLevel = "HIGH";
+    }
+
+    return {
+      intent: this._publicIntent(intent),
+      recipient: intent.recipient,
+      amount: intent.amount,
+      token: "QUSDC",
+      estimatedGas: gasEstimate ? {
+        ...gasEstimate,
+        label: `${gasEstimate.feeQie} QIE`
+      } : null,
+      budgetRemainingAfterPayment: ethers.formatUnits(budgetAfterWei, 18),
+      dailySpendingRemaining: ethers.formatUnits(dailyAfterWei, 18),
+      policyStatus: currentPolicyStatus,
+      riskLevel,
+      executionReadiness,
+      validation: evaluation.validation,
+      decision: evaluation.decision,
+      approvalRequired: Boolean(evaluation.requiresApproval),
+      policy,
+      reasons: evaluation.validation?.reasons || [],
+      available: evaluation.accepted && !evaluation.requiresApproval,
+      details: evaluation.accepted
+        ? (evaluation.requiresApproval
+          ? "Intent validated and queued for manual approval."
+          : "Intent is ready for execution.")
+        : summarizeReason(evaluation.validation?.reason || evaluation.validation?.reasons)
+    };
   }
 
   async _inspectIntentStream(runtime, intent) {

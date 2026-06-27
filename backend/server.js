@@ -137,10 +137,13 @@ function normalizeIntent(record, decimals) {
     amountWei: String(record.intent?.amountWei || executePayment?.amountWei || "0"),
     amount: record.intent?.amount || formatUnits(record.intent?.amountWei || executePayment?.amountWei || 0, decimals),
     metadata: record.intent?.metadata || null,
+    policy: record.intent?.policy || null,
     validation: record.validation || null,
     decision: record.decision || null,
+    approval: record.approval || null,
     txHash: executePayment?.txHash || null,
-    execution: record.execution || null
+    execution: record.execution || null,
+    timeline: Array.isArray(record.timeline) ? record.timeline : []
   };
 }
 
@@ -157,27 +160,6 @@ function buildTimeline({ runtimeHistory, intentHistory, ledgerRecords, decimals 
     amount: formatUnits(record.transaction?.executePayment?.amountWei || 0, decimals)
   }));
 
-  const intentEvents = intentHistory.map((record) => {
-    const intent = normalizeIntent(record, decimals);
-    const reason = record.validation?.reason
-      || record.execution?.reason
-      || record.decision?.reasoning
-      || record.intent?.metadata?.task
-      || "Payment intent";
-
-    return {
-      id: record.intentId || record.runId || `intent-${record.timestamp}`,
-      source: "payment_intent",
-      timestamp: record.completedAt || record.timestamp || record.startedAt,
-      type: "payment_intent",
-      status: record.status,
-      label: "Payment intent",
-      detail: reason,
-      txHash: intent?.txHash || null,
-      amount: intent?.amount || "0"
-    };
-  });
-
   const ledgerEvents = ledgerRecords.map((record) => ({
     id: `${record.eventType}-${record.timestamp}-${record.txHash || record.runId || ""}`,
     source: "ledger",
@@ -189,6 +171,39 @@ function buildTimeline({ runtimeHistory, intentHistory, ledgerRecords, decimals 
     txHash: record.txHash || null,
     amount: formatUnits(record.amount || record.requiredAmount || 0, decimals)
   }));
+
+  const intentEvents = intentHistory.flatMap((record) => {
+    const intent = normalizeIntent(record, decimals);
+    const stages = Array.isArray(record.timeline) && record.timeline.length > 0
+      ? record.timeline.map((stage, index) => ({
+          id: `${record.intentId || record.runId || "intent"}-${index}`,
+          source: "payment_intent",
+          timestamp: stage.timestamp || record.completedAt || record.timestamp || record.startedAt || null,
+          type: "intent_stage",
+          status: stage.status || record.status || "unknown",
+          label: stage.stage || "Intent stage",
+          detail: stage.detail || record.validation?.reason || record.execution?.reason || record.decision?.reasoning || "Payment intent stage",
+          txHash: intent?.txHash || null,
+          amount: intent?.amount || "0"
+        }))
+      : [{
+          id: record.intentId || record.runId || `intent-${record.timestamp}`,
+          source: "payment_intent",
+          timestamp: record.completedAt || record.timestamp || record.startedAt || null,
+          type: "payment_intent",
+          status: record.status,
+          label: "Payment intent",
+          detail: record.validation?.reason
+            || record.execution?.reason
+            || record.decision?.reasoning
+            || record.intent?.metadata?.task
+            || "Payment intent",
+          txHash: intent?.txHash || null,
+          amount: intent?.amount || "0"
+        }];
+
+    return stages;
+  });
 
   return [...runtimeEvents, ...intentEvents, ...ledgerEvents]
     .filter((event) => event.timestamp)
@@ -315,6 +330,28 @@ async function buildAgentSnapshot(runtime, requestedAgentId) {
       normalizeTransaction(intentTx, decimals)
     ]);
     const normalizedIntents = intentHistory.map((record) => normalizeIntent(record, decimals));
+    const pendingApprovals = runtime.agentRuntime.getPendingApprovals(100).map((record) => normalizeIntent(record, decimals));
+    const finalizedIntents = normalizedIntents.filter((record) => ["executed", "failed", "rejected"].includes(record.status));
+    const executedIntents = normalizedIntents.filter((record) => record.status === "executed");
+    const successfulPaymentsToday = finalizedIntents.filter((record) => {
+      const timestamp = new Date(record.timestamp || record.completedAt || 0).getTime();
+      return record.status === "executed" && timestamp >= startOfUtcDay();
+    });
+    const successRate = finalizedIntents.length > 0
+      ? Number(((executedIntents.length * 10000) / finalizedIntents.length)) / 100
+      : null;
+    const averagePaymentSizeWei = executedIntents.length > 0
+      ? executedIntents.reduce((total, record) => total + BigInt(record.amountWei || "0"), 0n) / BigInt(executedIntents.length)
+      : 0n;
+    const largestPaymentSizeWei = executedIntents.reduce((largest, record) => {
+      const amountWei = BigInt(record.amountWei || "0");
+      return amountWei > largest ? amountWei : largest;
+    }, 0n);
+    const paymentsToday = successfulPaymentsToday.length;
+    const failedValidations = normalizedIntents.filter((record) => record.status === "rejected" && record.validation).length;
+    const successfulPayments = executedIntents.length;
+    const failedPayments = normalizedIntents.filter((record) => ["failed", "rejected"].includes(record.status)).length;
+    const totalPayments = normalizedIntents.length;
 
     snapshot.network = {
       chainId: CHAIN_ID,
@@ -374,15 +411,45 @@ async function buildAgentSnapshot(runtime, requestedAgentId) {
       totalSpent: formatUnits(totalSpentWei, decimals),
       latestBlock: blockNumber,
       intentsReceived: intentHistory.length,
-      intentsExecuted: intentHistory.filter((record) => record.status === "executed").length,
+      intentsExecuted: successfulPayments,
       intentsRejected: intentHistory.filter((record) => record.status === "rejected").length,
-      intentsFailed: intentHistory.filter((record) => record.status === "failed").length
+      intentsFailed: intentHistory.filter((record) => record.status === "failed").length,
+      totalPayments,
+      totalQusdcSpent: formatUnits(totalSpentWei, decimals),
+      paymentsToday,
+      successRate,
+      failedValidations,
+      successfulPayments,
+      failedPayments,
+      largestPaymentWei: largestPaymentSizeWei.toString(),
+      largestPayment: largestPaymentSizeWei > 0n ? formatUnits(largestPaymentSizeWei, decimals) : "0",
+      averagePaymentWei: averagePaymentSizeWei.toString(),
+      averagePayment: averagePaymentSizeWei > 0n ? formatUnits(averagePaymentSizeWei, decimals) : "0",
+      averagePaymentSize: averagePaymentSizeWei > 0n ? formatUnits(averagePaymentSizeWei, decimals) : "0",
+      currentDailyBudgetRemaining: formatUnits(remainingWei, decimals),
+      pendingApprovals: pendingApprovals.length,
+      manualApprovalEnabled: Boolean(runtime.agentRuntime.getPolicy?.()?.manualApprovalEnabled)
     };
     snapshot.history = {
       runtime: runtimeHistory,
       intents: normalizedIntents,
       ledger: ledgerRecords,
       timeline: buildTimeline({ runtimeHistory, intentHistory, ledgerRecords, decimals })
+    };
+    snapshot.pendingApprovals = pendingApprovals;
+    snapshot.settings = runtime.agentRuntime.getPolicy();
+    snapshot.analytics = {
+      totalPayments,
+      totalQusdcSpent: formatUnits(totalSpentWei, decimals),
+      paymentsToday,
+      successRate,
+      failedValidations,
+      successfulPayments,
+      failedPayments,
+      largestPayment: largestPaymentSizeWei > 0n ? formatUnits(largestPaymentSizeWei, decimals) : "0",
+      averagePayment: averagePaymentSizeWei > 0n ? formatUnits(averagePaymentSizeWei, decimals) : "0",
+      averagePaymentSize: averagePaymentSizeWei > 0n ? formatUnits(averagePaymentSizeWei, decimals) : "0",
+      currentDailyBudgetRemaining: formatUnits(remainingWei, decimals)
     };
   } catch (error) {
     snapshot.error = error.shortMessage || error.reason || error.message || String(error);
@@ -550,6 +617,33 @@ function makeApp(runtime = makeRuntime()) {
   app.post("/payment-intents", async (req, res, next) => {
     try {
       const result = await runtime.agentRuntime.submitPaymentIntent(req.body);
+      res.status(result.ok ? 200 : 422).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/payment-intents/preview", async (req, res, next) => {
+    try {
+      const result = await runtime.agentRuntime.previewPaymentIntent(req.body);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/payment-intents/:intentId/approve", async (req, res, next) => {
+    try {
+      const result = await runtime.agentRuntime.approvePaymentIntent(req.params.intentId, req.body);
+      res.status(result.ok ? 200 : 422).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/payment-intents/:intentId/reject", async (req, res, next) => {
+    try {
+      const result = await runtime.agentRuntime.rejectPaymentIntent(req.params.intentId, req.body);
       res.status(result.ok ? 200 : 422).json(result);
     } catch (error) {
       next(error);
@@ -731,6 +825,30 @@ function makeApp(runtime = makeRuntime()) {
         blockNumber: receipt.blockNumber
       });
       res.json(bigintJson({ agentId, paused: true, txHash: tx.hash, gasUsed: receipt.gasUsed }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/unpause-agent", async (req, res, next) => {
+    try {
+      const { contracts, ledger } = await getBlockchainRuntime(runtime);
+      const agentId = toPositiveUint(req.body.agentId, "agentId");
+      const tx = await contracts.controller.unpauseAgent(agentId);
+      const receipt = await tx.wait();
+      ledger.append({
+        eventType: "contract_interaction",
+        status: receipt.status === 1 ? "confirmed" : "failed",
+        agentId,
+        interactionType: "unpauseAgent",
+        contractInteractionType: "unpauseAgent",
+        contractFunction: "unpauseAgent",
+        contractAddress: contracts.addresses.controller,
+        txHash: tx.hash,
+        gasUsed: receipt.gasUsed,
+        blockNumber: receipt.blockNumber
+      });
+      res.json(bigintJson({ agentId, paused: false, txHash: tx.hash, gasUsed: receipt.gasUsed }));
     } catch (error) {
       next(error);
     }

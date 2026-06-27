@@ -1,15 +1,17 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
+import { ethers } from "ethers";
 import { motion } from "framer-motion";
+import { api } from "../lib/api";
+import { getQieTxExplorerUrl } from "../lib/explorer";
+import { loadIntentPolicy } from "../lib/intentWorkspace";
 import { useAgentSnapshot } from "../hooks/useAgentSnapshot";
-
-const QIE_TX_EXPLORER_URL = "https://mainnet.qie.digital/tx/";
 
 function Panel({ children, className = "" }) {
   return (
     <motion.section
       whileHover={{ scale: 1.005 }}
       transition={{ duration: 0.16, ease: "easeOut" }}
-      className={`card-dark p-5 md:p-6 ${className}`}
+      className={`card-dark p-5 md:p-6 min-w-0 ${className}`}
     >
       {children}
     </motion.section>
@@ -36,12 +38,12 @@ function shortHash(value) {
   return `${value.slice(0, 10)}...${value.slice(-6)}`;
 }
 
-function TxHashLink({ hash, className = "" }) {
+function TxHashLink({ hash, network, className = "" }) {
   if (!hash) return "None";
 
   return (
     <a
-      href={`${QIE_TX_EXPLORER_URL}${hash}`}
+      href={getQieTxExplorerUrl(network, hash)}
       target="_blank"
       rel="noopener noreferrer"
       className={`hover:text-ink-1 transition-colors underline decoration-wire underline-offset-4 ${className}`}
@@ -75,22 +77,93 @@ function Stat({ label, value }) {
 function intentTone(status) {
   if (status === "executed" || status === "accepted") return "ok";
   if (status === "failed" || status === "rejected") return "bad";
-  if (status === "received") return "warn";
+  if (status === "pending_approval" || status === "received") return "warn";
   return "neutral";
 }
 
+function toBigIntSafe(value) {
+  try {
+    return BigInt(value || 0);
+  } catch (_error) {
+    return 0n;
+  }
+}
+
+function formatUnitsSafe(value, decimals = 6) {
+  try {
+    return ethers.formatUnits(toBigIntSafe(value), decimals);
+  } catch (_error) {
+    return "0";
+  }
+}
+
+function buildSpendingInsights(intents, decimals = 6) {
+  const history = Array.isArray(intents) ? intents : [];
+  const successful = history.filter((intent) => intent.status === "executed");
+  const failed = history.filter((intent) => ["failed", "rejected"].includes(intent.status));
+  const successfulAmounts = successful.map((intent) => toBigIntSafe(intent.amountWei));
+  const totalSpentWei = successfulAmounts.reduce((sum, amount) => sum + amount, 0n);
+  const largestPaymentWei = successfulAmounts.reduce((largest, amount) => (amount > largest ? amount : largest), 0n);
+  const averagePaymentWei = successful.length > 0 ? totalSpentWei / BigInt(successful.length) : 0n;
+
+  return {
+    totalPayments: history.length,
+    totalQusdcSpent: formatUnitsSafe(totalSpentWei, decimals),
+    largestPayment: formatUnitsSafe(largestPaymentWei, decimals),
+    averagePayment: formatUnitsSafe(averagePaymentWei, decimals),
+    successfulPayments: successful.length,
+    failedPayments: failed.length
+  };
+}
+
 export default function Dashboard() {
-  const { connected, error, snapshot } = useAgentSnapshot(3000);
+  const { connected, error, refresh, snapshot } = useAgentSnapshot(3000);
+  const [actionBusyId, setActionBusyId] = useState(null);
   const loop = snapshot.runtime?.loop || {};
   const budget = snapshot.budget || {};
   const decision = snapshot.decision || {};
   const transaction = snapshot.transaction || {};
   const pass = snapshot.qiePass || {};
   const intents = snapshot.history?.intents || [];
+  const pendingApprovals = snapshot.pendingApprovals || [];
+  const analytics = snapshot.analytics || {};
+  const tokenDecimals = snapshot.balances?.tokenDecimals || 6;
+  const network = snapshot.network || {};
+  const spendingInsights = useMemo(() => buildSpendingInsights(intents, tokenDecimals), [intents, tokenDecimals]);
+  const settings = snapshot.settings || {};
+  const localPolicy = loadIntentPolicy();
+  const currentPolicy = {
+    ...settings,
+    ...localPolicy
+  };
   const running = loop.inFlight || loop.running;
 
+  const handlePendingApproval = async (intentId, action) => {
+    if (!intentId) return;
+    setActionBusyId(intentId);
+    try {
+      if (action === "approve") {
+        await api.approvePaymentIntent(intentId, { reason: "Approved from dashboard" });
+      } else {
+        await api.rejectPaymentIntent(intentId, { reason: "Rejected from dashboard" });
+      }
+      await refresh();
+    } catch (_error) {
+      // Keep the dashboard responsive; snapshot refresh will surface the latest state.
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const formatSuccessRate = (value) => {
+    if (value === null || value === undefined || value === "") return "Unavailable";
+    if (typeof value === "number") return `${value.toFixed(2)}%`;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : String(value);
+  };
+
   return (
-    <main className="min-h-screen bg-surface-0 text-ink-1 pt-20 pb-12">
+    <main className="min-h-screen bg-surface-0 text-ink-1 pt-20 pb-12 overflow-x-hidden">
       <div className="container-grid">
         <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
@@ -161,7 +234,7 @@ export default function Dashboard() {
           <Panel>
             <p className="stat-label mb-2">Last transaction</p>
             <h2 className="text-xl md:text-2xl font-medium text-ink-0 mb-5">
-              <TxHashLink hash={transaction.txHash} />
+              <TxHashLink hash={transaction.txHash} network={network} />
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Stat label="Status" value={transaction.status || "none"} />
@@ -171,6 +244,48 @@ export default function Dashboard() {
             </div>
           </Panel>
         </div>
+
+        <Panel className="mt-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-5">
+            <div>
+              <p className="stat-label mb-2">Analytics</p>
+              <h2 className="text-xl md:text-2xl font-medium text-ink-0">Live spending metrics</h2>
+            </div>
+            <StatusPill tone={currentPolicy.manualApprovalEnabled ? "warn" : "ok"}>
+              {currentPolicy.manualApprovalEnabled ? "Manual approval enabled" : "Auto approval"}
+            </StatusPill>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Stat label="Total Payments" value={analytics.totalPayments ?? 0} />
+            <Stat label="Total QUSDC Spent" value={`${analytics.totalQusdcSpent || "0"} QUSDC`} />
+            <Stat label="Payments Today" value={analytics.paymentsToday ?? 0} />
+            <Stat label="Success Rate" value={formatSuccessRate(analytics.successRate)} />
+            <Stat label="Failed Validations" value={analytics.failedValidations ?? 0} />
+            <Stat label="Average Payment Size" value={`${analytics.averagePaymentSize || "0"} QUSDC`} />
+            <Stat label="Daily Budget Remaining" value={`${analytics.currentDailyBudgetRemaining || budget.remaining || "0"} QUSDC`} />
+            <Stat label="Pending Approvals" value={pendingApprovals.length} />
+          </div>
+        </Panel>
+
+        <Panel className="mt-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-5">
+            <div>
+              <p className="stat-label mb-2">Spending insights</p>
+              <h2 className="text-xl md:text-2xl font-medium text-ink-0">Derived from payment history</h2>
+            </div>
+            <StatusPill tone={spendingInsights.successfulPayments > 0 ? "ok" : "neutral"}>
+              {spendingInsights.successfulPayments > 0 ? "History available" : "No successful payments yet"}
+            </StatusPill>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <Stat label="Total payments" value={spendingInsights.totalPayments} />
+            <Stat label="Total QUSDC spent" value={`${spendingInsights.totalQusdcSpent} QUSDC`} />
+            <Stat label="Largest payment" value={`${spendingInsights.largestPayment} QUSDC`} />
+            <Stat label="Average payment" value={`${spendingInsights.averagePayment} QUSDC`} />
+            <Stat label="Successful payments" value={spendingInsights.successfulPayments} />
+            <Stat label="Failed payments" value={spendingInsights.failedPayments} />
+          </div>
+        </Panel>
 
         <Panel className="mt-5">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-5">
@@ -200,8 +315,26 @@ export default function Dashboard() {
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Stat label="Recipient" value={shortHash(intent.recipient)} />
                   <Stat label="Amount" value={`${intent.amount || "0"} QUSDC`} />
-                  <Stat label="Tx" value={<TxHashLink hash={intent.txHash} />} />
+                  <Stat label="Tx" value={<TxHashLink hash={intent.txHash} network={network} />} />
                 </div>
+                {intent.approval?.status === "pending" && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      className="btn-secondary text-xs px-4 py-2"
+                      onClick={() => handlePendingApproval(intent.intentId || intent.id, "approve")}
+                      disabled={actionBusyId === (intent.intentId || intent.id)}
+                    >
+                      {actionBusyId === (intent.intentId || intent.id) ? "Working..." : "Approve"}
+                    </button>
+                    <button
+                      className="btn-secondary text-xs px-4 py-2"
+                      onClick={() => handlePendingApproval(intent.intentId || intent.id, "reject")}
+                      disabled={actionBusyId === (intent.intentId || intent.id)}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                )}
                 {(intent.validation?.reason || intent.execution?.reason || intent.decision?.reasoning) && (
                   <p className="mt-3 text-body-sm text-ink-2 break-words">
                     {intent.validation?.reason || intent.execution?.reason || intent.decision?.reasoning}
@@ -216,21 +349,76 @@ export default function Dashboard() {
           </div>
         </Panel>
 
+        {pendingApprovals.length > 0 && (
+          <Panel className="mt-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-5">
+              <div>
+                <p className="stat-label mb-2">Approval queue</p>
+                <h2 className="text-xl md:text-2xl font-medium text-ink-0">Pending human review</h2>
+              </div>
+              <StatusPill tone="warn">{pendingApprovals.length} pending</StatusPill>
+            </div>
+            <div className="space-y-3">
+              {pendingApprovals.map((intent) => (
+                <div key={intent.intentId || intent.id} className="border border-wire bg-surface-1 rounded-sm p-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-mono text-mono-sm text-ink-0">{shortHash(intent.intentId || intent.id)}</p>
+                      <p className="text-body-sm text-ink-3 mt-1">{formatDate(intent.approval?.requestedAt || intent.timestamp)}</p>
+                    </div>
+                    <StatusPill tone="warn">Pending approval</StatusPill>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <Stat label="Recipient" value={shortHash(intent.recipient)} />
+                    <Stat label="Amount" value={`${intent.amount || "0"} QUSDC`} />
+                    <Stat label="Risk" value={intent.validation?.approvalRequired ? "Manual review" : "Queued"} />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      className="btn-primary text-xs px-4 py-2"
+                      onClick={() => handlePendingApproval(intent.intentId || intent.id, "approve")}
+                      disabled={actionBusyId === (intent.intentId || intent.id)}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className="btn-secondary text-xs px-4 py-2"
+                      onClick={() => handlePendingApproval(intent.intentId || intent.id, "reject")}
+                      disabled={actionBusyId === (intent.intentId || intent.id)}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
+
         <Panel className="mt-5">
           <p className="stat-label mb-2">Runtime timeline</p>
           <h2 className="text-xl md:text-2xl font-medium text-ink-0 mb-5">Recent events</h2>
           <div className="space-y-3">
-            {snapshot.history?.timeline?.length ? snapshot.history.timeline.slice(0, 12).map((event) => (
-              <div key={event.id} className="border border-wire bg-surface-1 rounded-sm p-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              {snapshot.history?.timeline?.length ? snapshot.history.timeline.slice(0, 12).map((event) => (
+                <div key={event.id} className="border border-wire bg-surface-1 rounded-sm p-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-mono text-mono-sm text-ink-0">{event.label}</p>
                     <p className="text-body-sm text-ink-3 mt-1">{formatDate(event.timestamp)}</p>
                   </div>
-                  <StatusPill>{event.status}</StatusPill>
+                  <div className="flex flex-wrap gap-2">
+                    <StatusPill>{event.status}</StatusPill>
+                    {event.type === "intent_stage" && <StatusPill tone="neutral">{event.label}</StatusPill>}
+                  </div>
+                  </div>
+                  <p className="mt-3 text-body-sm text-ink-2 break-words">{event.detail}</p>
+                  {event.txHash && (
+                    <div className="mt-3">
+                      <p className="stat-label mb-2">Tx</p>
+                      <TxHashLink hash={event.txHash} network={network} />
+                    </div>
+                  )}
                 </div>
-                <p className="mt-3 text-body-sm text-ink-2 break-words">{event.detail}</p>
-              </div>
             )) : (
               <div className="border border-dashed border-surface-5 bg-surface-1 rounded-sm p-4">
                 <p className="font-mono text-mono-sm text-ink-3">No runtime events recorded</p>

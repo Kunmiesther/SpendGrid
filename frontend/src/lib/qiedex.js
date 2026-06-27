@@ -295,6 +295,44 @@ export async function fetchQiedexQuote({ provider, token, amountIn, qusdcAddress
     throw new Error(`QIEDex quote returned zero output for ${token.symbol}/QUSDC.`);
   }
 
+  let estimatedGas = null;
+  try {
+    const signer = typeof provider.getSigner === "function" ? await provider.getSigner().catch(() => null) : null;
+    if (signer) {
+      const owner = await signer.getAddress();
+      const feeData = await provider.getFeeData().catch(() => null);
+      const gasPrice = feeData?.gasPrice || feeData?.maxFeePerGas || feeData?.lastBaseFeePerGas || null;
+      const routerWithSigner = new ethers.Contract(QIEDEX_ROUTER_ADDRESS, QIEDEX_ROUTER_ABI, signer);
+      const tokenWithSigner = token.native
+        ? null
+        : new ethers.Contract(token.address, ERC20_ABI, signer);
+      const deadline = Math.floor(Date.now() / 1000) + 300;
+      let totalGas = 0n;
+      if (tokenWithSigner) {
+        try {
+          const allowance = BigInt(await tokenWithSigner.allowance(owner, QIEDEX_ROUTER_ADDRESS));
+          if (allowance < input) {
+            totalGas += BigInt(await tokenWithSigner.approve.estimateGas(QIEDEX_ROUTER_ADDRESS, input));
+          }
+        } catch (_approvalEstimateError) {
+          // Approval estimation is best-effort only.
+        }
+      }
+      totalGas += BigInt(await routerWithSigner.swapExactTokensForTokens.estimateGas(input, applySlippage(amountOut, slippageBps), path, owner, deadline));
+      if (gasPrice && totalGas > 0n) {
+        const feeWei = totalGas * BigInt(gasPrice);
+        estimatedGas = {
+          gasUsed: totalGas.toString(),
+          gasPrice: gasPrice.toString(),
+          feeWei: feeWei.toString(),
+          feeQie: ethers.formatUnits(feeWei, 18)
+        };
+      }
+    }
+  } catch (_estimateError) {
+    estimatedGas = null;
+  }
+
   return {
     amountIn: input.toString(),
     amountOut: amountOut.toString(),
@@ -305,7 +343,8 @@ export async function fetchQiedexQuote({ provider, token, amountIn, qusdcAddress
     quoteSource,
     reserveIn: reserveIn.toString(),
     reserveOut: reserveOut.toString(),
-    slippageBps: BigInt(slippageBps).toString()
+    slippageBps: BigInt(slippageBps).toString(),
+    estimatedGas
   };
 }
 

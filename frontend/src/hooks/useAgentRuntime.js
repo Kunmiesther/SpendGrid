@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { api } from "../lib/api";
 import { loadDeployment } from "../lib/deployment";
@@ -16,6 +16,8 @@ export function useAgentRuntime(interval = 4000) {
   const [deployment, setDeployment] = useState(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
+  const submitIntentPromiseRef = useRef(null);
+  const stopAgentPromiseRef = useRef(null);
 
   const agentId = DEFAULT_AGENT_ID;
   const liveRefresh = live.refresh;
@@ -34,50 +36,94 @@ export function useAgentRuntime(interval = 4000) {
     }
   }, [liveRefresh]);
 
-  const buildPaymentIntent = useCallback(async () => {
+  const buildPaymentIntent = useCallback(async (overrides = {}) => {
     const activeDeployment = deployment || (await loadDeployment());
-    const amountWei = ethers.parseUnits(DEFAULT_INTENT_AMOUNT, QUSDC_DECIMALS).toString();
+    const amountValue = overrides.amount !== undefined && overrides.amount !== null && overrides.amount !== ""
+      ? String(overrides.amount)
+      : DEFAULT_INTENT_AMOUNT;
+    const amountWei = overrides.amountWei !== undefined && overrides.amountWei !== null && overrides.amountWei !== ""
+      ? String(overrides.amountWei)
+      : ethers.parseUnits(amountValue, QUSDC_DECIMALS).toString();
+    const recipient = overrides.recipient || DEFAULT_RECEIVER || activeDeployment?.deployer || activeDeployment?.addresses?.agentRegistry;
+    const metadata = {
+      task: overrides.metadata?.task || DEFAULT_AGENT_PROMPT,
+      source: overrides.metadata?.source || "dashboard",
+      amount: amountValue,
+      tokenDecimals: QUSDC_DECIMALS,
+      category: overrides.metadata?.category || null,
+      description: overrides.metadata?.description || null,
+      templateId: overrides.metadata?.templateId || null
+    };
     return {
       agentId,
-      recipient: DEFAULT_RECEIVER || activeDeployment?.deployer || activeDeployment?.addresses?.agentRegistry,
+      recipient,
       amountWei,
-      metadata: {
-        task: DEFAULT_AGENT_PROMPT,
-        source: "dashboard",
-        amount: DEFAULT_INTENT_AMOUNT,
-        tokenDecimals: QUSDC_DECIMALS
-      }
+      metadata,
+      policy: overrides.policy || null
     };
   }, [agentId, deployment]);
 
-  const submitIntent = useCallback(async () => {
-    setRunning(true);
+  const previewIntent = useCallback(async (overrides = {}) => {
     setError(null);
     try {
-      const intent = await buildPaymentIntent();
-      const result = await api.submitPaymentIntent(intent);
-      await liveRefresh();
-      return result;
+      const intent = await buildPaymentIntent(overrides);
+      return await api.previewPaymentIntent(intent);
     } catch (err) {
       setError(err.message);
       throw err;
-    } finally {
+    }
+  }, [buildPaymentIntent]);
+
+  const submitIntent = useCallback(async (overrides = {}) => {
+    if (submitIntentPromiseRef.current) {
+      return submitIntentPromiseRef.current;
+    }
+
+    setRunning(true);
+    setError(null);
+    const request = (async () => {
+      const intent = await buildPaymentIntent(overrides);
+      const result = await api.submitPaymentIntent(intent);
+      await liveRefresh();
+      return result;
+    })();
+
+    submitIntentPromiseRef.current = request.finally(() => {
+      submitIntentPromiseRef.current = null;
       setRunning(false);
+    });
+
+    try {
+      return await submitIntentPromiseRef.current;
+    } catch (err) {
+      setError(err.message);
+      throw err;
     }
   }, [buildPaymentIntent, liveRefresh]);
 
   const stopAgent = useCallback(async () => {
+    if (stopAgentPromiseRef.current) {
+      return stopAgentPromiseRef.current;
+    }
+
     setRunning(true);
     setError(null);
-    try {
+    const request = (async () => {
       const result = await api.stopAgentLoop();
       await liveRefresh();
       return result;
+    })();
+
+    stopAgentPromiseRef.current = request.finally(() => {
+      stopAgentPromiseRef.current = null;
+      setRunning(false);
+    });
+
+    try {
+      return await stopAgentPromiseRef.current;
     } catch (err) {
       setError(err.message);
       throw err;
-    } finally {
-      setRunning(false);
     }
   }, [liveRefresh]);
 
@@ -116,6 +162,7 @@ export function useAgentRuntime(interval = 4000) {
         amountWei: ethers.parseUnits(DEFAULT_INTENT_AMOUNT, QUSDC_DECIMALS).toString(),
         tokenDecimals: QUSDC_DECIMALS
       },
+      previewIntent,
       totalSpent,
     }),
     [
@@ -130,6 +177,7 @@ export function useAgentRuntime(interval = 4000) {
       liveSnapshot,
       refresh,
       running,
+      previewIntent,
       submitIntent,
       stopAgent,
       totalSpent,

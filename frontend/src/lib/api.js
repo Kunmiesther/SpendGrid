@@ -67,9 +67,13 @@ export const api = {
   getAgentSnapshot: (agentId) => request("GET", withQuery("/agent/snapshot", { agentId })),
   getAgentEventsUrl: (agentId) => `${API_BASE}${withQuery("/agent/events", { agentId })}`,
   getAgentHistory: (params) => request("GET", withQuery("/agent/history", params)),
+  previewPaymentIntent: (payload) => request("POST", "/payment-intents/preview", payload),
   submitPaymentIntent: (payload) => request("POST", "/payment-intents", payload),
   getPaymentIntents: (params) => request("GET", withQuery("/payment-intents", params)),
+  approvePaymentIntent: (intentId, payload = {}) => request("POST", `/payment-intents/${intentId}/approve`, payload),
+  rejectPaymentIntent: (intentId, payload = {}) => request("POST", `/payment-intents/${intentId}/reject`, payload),
   startAgentLoop: (payload) => request("POST", "/agent/start-loop", payload),
   stopAgentLoop: () => request("POST", "/agent/stop-loop"),
   getAgentLoopStatus: () => request("GET", "/agent/loop-status"),
+  unpauseAgent: (agentId) => request("POST", "/unpause-agent", { agentId }),
 };

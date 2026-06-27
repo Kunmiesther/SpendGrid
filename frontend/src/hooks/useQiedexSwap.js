@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { QIE_MAINNET } from "../lib/wallet";
 import {
@@ -34,8 +34,10 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
   const [loadingBalances, setLoadingBalances] = useState(false);
   const [quoting, setQuoting] = useState(false);
   const [swapping, setSwapping] = useState(false);
+  const [stage, setStage] = useState("idle");
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const swapPromiseRef = useRef(null);
 
   const tokens = useMemo(
     () => makeSwapTokens(deployment?.addresses || EMPTY_ADDRESSES),
@@ -106,6 +108,7 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
     }
 
     setQuoting(true);
+    setStage("quoting");
     setError(null);
     try {
       const amountIn = parseTokenInput(inputAmount, selectedToken.decimals);
@@ -123,10 +126,15 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
       return null;
     } finally {
       setQuoting(false);
+      setStage("idle");
     }
   }, [canQuote, inputAmount, provider, selectedToken, slippageBps]);
 
   const swap = useCallback(async () => {
+    if (swapPromiseRef.current) {
+      return swapPromiseRef.current;
+    }
+
     if (!wallet?.connected) {
       throw new Error("Connect a wallet before swapping.");
     }
@@ -138,51 +146,82 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
     }
 
     setSwapping(true);
+    setStage("preparing");
     setError(null);
     setSuccess(null);
-    try {
-      const signer = await provider.getSigner();
-      const activeQuote = quote || await loadQuote();
-      if (!activeQuote) {
-        throw new Error("Quote is required before swapping.");
+
+    const request = (async () => {
+      let failed = false;
+      try {
+        const signer = await provider.getSigner();
+        const activeQuote = quote || await loadQuote();
+        if (!activeQuote) {
+          throw new Error("Quote is required before swapping.");
+        }
+        const amountIn = parseTokenInput(inputAmount, selectedToken.decimals);
+        const selectedBalance = BigInt(balances[selectedToken.id]?.raw || "0");
+        if (!selectedToken.native && selectedBalance < amountIn) {
+          throw new Error(`Insufficient ${selectedToken.symbol} balance.`);
+        }
+
+        setStage("submitting");
+        const result = await executeQiedexSwap({
+          provider,
+          signer,
+          token: selectedToken,
+          amountIn,
+          minReceived: activeQuote.minReceived,
+          recipient: wallet.address
+        });
+        setStage("confirming");
+        const nextBalances = await refreshBalances();
+
+        const freshQusdc = BigInt(nextBalances.QUSDC?.raw || "0");
+        const sufficient = required <= 0n || freshQusdc >= required;
+        const refreshedQusdc = formatTokenAmount(nextBalances.QUSDC?.raw || 0n, QUSDC_DECIMALS);
+        const message = sufficient
+          ? `Swap confirmed. QUSDC balance refreshed to ${refreshedQusdc} and is ready for payment intent.`
+          : `Swap confirmed. QUSDC balance refreshed to ${refreshedQusdc}. Add more QUSDC to meet the payment amount.`;
+
+        setSuccess({
+          ...result,
+          message,
+          sufficient,
+          balanceAfterSwap: refreshedQusdc,
+          output: formatTokenAmount(activeQuote.amountOut, QUSDC_DECIMALS),
+          route: activeQuote.path,
+          routeLabel: [selectedToken.symbol, "QUSDC"].join(" -> "),
+          estimatedGas: activeQuote.estimatedGas
+            ? {
+                ...activeQuote.estimatedGas,
+                label: `${activeQuote.estimatedGas.feeQie || "0"} QIE`
+              }
+            : null,
+          estimatedReceived: formatTokenAmount(activeQuote.amountOut, QUSDC_DECIMALS),
+          minimumReceived: formatTokenAmount(activeQuote.minReceived, QUSDC_DECIMALS)
+        });
+        setQuote(null);
+        setStage("idle");
+        return result;
+      } catch (err) {
+        const message = normalizeError(err);
+        setError(message);
+        setStage("failed");
+        failed = true;
+        throw err;
+      } finally {
+        setSwapping(false);
+        if (!failed) {
+          setStage("idle");
+        }
       }
-      const amountIn = parseTokenInput(inputAmount, selectedToken.decimals);
-      const selectedBalance = BigInt(balances[selectedToken.id]?.raw || "0");
-      if (!selectedToken.native && selectedBalance < amountIn) {
-        throw new Error(`Insufficient ${selectedToken.symbol} balance.`);
-      }
+    })();
 
-      const result = await executeQiedexSwap({
-        provider,
-        signer,
-        token: selectedToken,
-        amountIn,
-        minReceived: activeQuote.minReceived,
-        recipient: wallet.address
-      });
-      const nextBalances = await refreshBalances();
+    swapPromiseRef.current = request.finally(() => {
+      swapPromiseRef.current = null;
+    });
 
-      const freshQusdc = BigInt(nextBalances.QUSDC?.raw || "0");
-      const sufficient = required <= 0n || freshQusdc >= required;
-      const message = sufficient
-        ? "Swap confirmed. QUSDC balance is ready for payment intent."
-        : "Swap confirmed. Add more QUSDC to meet the payment amount.";
-
-      setSuccess({
-        ...result,
-        message,
-        sufficient,
-        output: formatTokenAmount(activeQuote.amountOut, QUSDC_DECIMALS)
-      });
-      setQuote(null);
-      return result;
-    } catch (err) {
-      const message = normalizeError(err);
-      setError(message);
-      throw err;
-    } finally {
-      setSwapping(false);
-    }
+    return swapPromiseRef.current;
   }, [
     balances,
     inputAmount,
@@ -216,6 +255,7 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
     setQuote(null);
     setError(null);
     setSuccess(null);
+    setStage("idle");
   }, [selectedTokenId]);
 
   return {
@@ -239,6 +279,7 @@ export function useQiedexSwap({ wallet, deployment, requiredAmountWei }) {
     setSlippageBps,
     slippageBps,
     success,
+    stage,
     swap,
     swapping,
     quoting,
